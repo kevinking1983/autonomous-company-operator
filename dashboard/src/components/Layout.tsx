@@ -1,4 +1,4 @@
-import { Bot, BookOpen, Brain, History, Inbox, LayoutDashboard, ListTodo, Moon, Sun } from 'lucide-react'
+import { Bot, BookOpen, Brain, FlaskConical, History, Inbox, LayoutDashboard, ListTodo, Moon, Sun } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import type { Overview } from '../lib/api'
@@ -39,6 +39,7 @@ export function Layout() {
       <Item to="/tasks" icon={ListTodo} label="Tasks" badge={running ? <Count tone="accent">{running} running</Count> : null} />
       <Item to="/runs" icon={History} label="Runs" />
       <Item to="/inbox" icon={Inbox} label="Approval inbox" badge={waiting ? <Count tone="warning">{waiting}</Count> : null} />
+      <Item to="/reliability" icon={FlaskConical} label="Reliability lab" />
       <Item to="/memory" icon={Brain} label="Memory" />
       <Item to="/company" icon={BookOpen} label="Company Pack" />
     </>

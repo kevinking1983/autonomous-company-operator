@@ -156,8 +156,87 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   get: <T,>(path: string) => request<T>(path),
   post: <T,>(path: string, body: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  put: <T,>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   del: <T,>(path: string) => request<T>(path, { method: 'DELETE' }),
-  evidenceUrl: (runId: string, name: string) => `/api/runs/${runId}/evidence/${encodeURIComponent(name)}`,
-  streamUrl: (runId: string, after = 0) => `/api/runs/${runId}/stream?after=${after}`,
-  liveUrl: (runId: string) => `/api/runs/${runId}/live.jpg`,
+  evidenceUrl: (runId: string, name: string, scope?: string | null) => scoped(`/api/runs/${runId}/evidence/${encodeURIComponent(name)}`, scope),
+  streamUrl: (runId: string, after = 0, scope?: string | null) => scoped(`/api/runs/${runId}/stream?after=${after}`, scope),
+  liveUrl: (runId: string, scope?: string | null) => scoped(`/api/runs/${runId}/live.jpg`, scope),
 }
+
+/** Runs made by an eval live in their own store; `scope` (eval:<id>:<case>:<profile>) points the run endpoints there. */
+export function scoped(path: string, scope?: string | null): string {
+  if (!scope) return path
+  return `${path}${path.includes('?') ? '&' : '?'}scope=${encodeURIComponent(scope)}`
+}
+
+// ── reliability lab ──
+
+export type EvalStatus = 'queued' | 'running' | 'stopping' | 'stopped' | 'paused' | 'completed'
+export interface EvalMeta {
+  id: string
+  label: string
+  pairs: [string, string][]
+  models: string[]
+  status: EvalStatus
+  created_at: string
+  updated_at: string
+  current?: [string, string] | null
+  reason?: string | null
+  total?: number
+  done?: number
+  passed?: number
+  scored?: number
+  errors?: number
+  pass_rate?: number | null
+}
+export interface EvalCheck { id: string; label: string; passed: boolean; detail: string; critical: boolean }
+export interface EvalResult {
+  case: string
+  profile: string
+  status: 'pass' | 'fail' | 'error'
+  checks: EvalCheck[]
+  run_id: string | null
+  phase: string | null
+  verified: boolean | null
+  verifier_agrees: boolean | null
+  approvals_asked: number
+  questions_answered: number
+  faults_injected: number
+  metrics: { tool_calls?: number; llm_calls?: number; input_tokens?: number; output_tokens?: number; seconds?: number; adaptations?: number; retries?: number; blocked?: number }
+  error: string | null
+}
+export interface GroupScore { runs: number; passed: number; pass_rate: number | null }
+export interface Scorecard {
+  runs: number
+  scored: number
+  passed: number
+  errors: number
+  pass_rate: number | null
+  money_correct_rate: number | null
+  unsafe_runs: number
+  human_gate_rate: number | null
+  verifier_agreement: number | null
+  verifier_false_passes: number
+  faults_injected: number
+  avg: { tool_calls: number | null; llm_calls: number | null; seconds: number | null; adaptations: number | null }
+  by_profile: Record<string, GroupScore>
+  by_case: Record<string, GroupScore>
+}
+export interface EvalDetail { meta: EvalMeta; results: EvalResult[]; scorecard: Scorecard }
+export interface EvalCatalog {
+  suites: { id: string; label: string; description: string; pairs: [string, string][] }[]
+  cases: { key: string; ticket_id: string; summary: string; tags: string[]; approval: string }[]
+  profiles: { name: string; label: string; description: string; faults: Record<string, unknown>; applies_to: string[] }[]
+}
+export interface FaultConfig {
+  error_rate: number
+  fail_next: number
+  latency_ms: number
+  session_expiry_in: number
+  stale_form_next: number
+  refund_commit_timeout_next: number
+  layout: 'standard' | 'shifted'
+  seed: number
+  systems: string[]
+}
+export interface SandboxFaults { config: FaultConfig; injected: number; recent: { at: string; kind: string; system: string; path: string }[] }

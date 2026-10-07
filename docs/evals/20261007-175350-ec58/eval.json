@@ -1,0 +1,32 @@
+{
+  "id": "20261007-175350-ec58",
+  "label": "Smoke (3 runs)",
+  "pairs": [
+    [
+      "missing_item",
+      "clean"
+    ],
+    [
+      "late_delivery",
+      "clean"
+    ],
+    [
+      "refund_status",
+      "clean"
+    ]
+  ],
+  "models": [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest"
+  ],
+  "status": "stopped",
+  "created_at": "2026-10-07T17:53:50+00:00",
+  "updated_at": "2026-10-07T17:59:36+00:00",
+  "started_at": "2026-10-07T17:53:50+00:00",
+  "current": [
+    "late_delivery",
+    "clean"
+  ],
+  "finished_at": "2026-10-07T17:59:36+00:00"
+}

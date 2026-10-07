@@ -55,6 +55,7 @@ class PageState:
     alerts: list[str] = field(default_factory=list)
     error: ErrorKind | None = None
     note: str = ""
+    blocked_actions: list[str] = field(default_factory=list)  # actions of the requests the guard blocked
 
     def render(self) -> str:
         head = [f"URL: {self.url}", f"Title: {self.title}"]
@@ -411,7 +412,9 @@ class BrowserSession:
         await asyncio.sleep(0.1)
         if self.page.url.startswith("chrome-error://"):
             await self.page.go_back(wait_until="load")
-        return await self.state(note="Blocked by company policy: " + "; ".join(reasons), error="policy")
+        state = await self.state(note="Blocked by company policy: " + "; ".join(reasons), error="policy")
+        state.blocked_actions = [v.action for v in self._verdicts if not v.allowed and v.action]
+        return state
 
     async def _stale_ref(self, ref: str) -> PageState:
         return await self.state(

@@ -24,14 +24,14 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { LiveBrowser } from '../components/LiveBrowser'
 import { Replay } from '../components/Replay'
 import { PhaseTracker } from '../components/PhaseTracker'
 import { Badge, Card, CardHeader, Empty, ErrorNote, Mono, PhasePill, Skeleton, Tabs } from '../components/ui'
 import { cx } from '../lib/ui-utils'
 import { describe } from '../lib/activity'
-import { api, type Report, type RunEvent, type RunState } from '../lib/api'
+import { api, scoped, type Report, type RunEvent, type RunState } from '../lib/api'
 import { clock, compactArgs, humanise, noteOf, rupees, timeAgo } from '../lib/format'
 import { usePoll, useRunStream } from '../lib/hooks'
 
@@ -39,10 +39,13 @@ const FINISHED = new Set(['completed', 'escalated', 'failed'])
 
 export function RunView() {
   const { runId = '' } = useParams()
-  const { data: state, error } = usePoll<RunState>(`/runs/${runId}`, 2000)
+  // A run made by an eval: ?scope=eval:<eval id>:<case>:<profile>
+  const scope = useSearchParams()[0].get('scope')
+  const evalId = scope?.split(':')[1]
+  const { data: state, error } = usePoll<RunState>(scoped(`/runs/${runId}`, scope), 2000)
   const finished = state ? FINISHED.has(state.phase) : false
-  const { data: report } = usePoll<Report>(`/runs/${runId}/report`, finished ? 0 : 4000)
-  const { events, live } = useRunStream<RunEvent>(api.streamUrl(runId))
+  const { data: report } = usePoll<Report>(scoped(`/runs/${runId}/report`, scope), finished ? 0 : 4000)
+  const { events, live } = useRunStream<RunEvent>(api.streamUrl(runId, 0, scope))
   const [tab, setTab] = useState<'story' | 'replay' | 'everything'>('story')
 
   const visited = useMemo(() => {
@@ -68,8 +71,8 @@ export function RunView() {
 
   return (
     <>
-      <Link to="/runs" className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink">
-        <ArrowLeft className="size-3.5" aria-hidden /> All runs
+      <Link to={evalId ? `/reliability?eval=${evalId}` : '/runs'} className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink">
+        <ArrowLeft className="size-3.5" aria-hidden /> {evalId ? `Eval ${evalId}` : 'All runs'}
       </Link>
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
@@ -130,11 +133,11 @@ export function RunView() {
             )}
           </Card>
           {report && report.changes.length > 0 && <Changes report={report} />}
-          <Evidence runId={state.run_id} names={report?.evidence ?? []} />
+          <Evidence runId={state.run_id} scope={scope} names={report?.evidence ?? []} />
         </div>
 
         <div className="space-y-6 xl:col-span-2">
-          <LiveBrowser runId={state.run_id} working={!finished && state.phase !== 'awaiting_human'} url={lastUrl} />
+          <LiveBrowser runId={state.run_id} scope={scope} working={!finished && state.phase !== 'awaiting_human'} url={lastUrl} />
           <Card>
             <CardHeader title="Task contract" subtitle="Written before acting; checked independently at the end" icon={FileSignature} />
             {state.contract ? (
@@ -497,7 +500,7 @@ function RecordDiff({ diff }: { diff: { op: '+' | '-'; text: string }[] }) {
   )
 }
 
-function Evidence({ runId, names }: { runId: string; names: string[] }) {
+function Evidence({ runId, scope, names }: { runId: string; scope: string | null; names: string[] }) {
   const [open, setOpen] = useState<string | null>(null)
   const images = names.filter((n) => n.endsWith('.png'))
   if (!images.length) return null
@@ -507,7 +510,7 @@ function Evidence({ runId, names }: { runId: string; names: string[] }) {
       <div className="grid grid-cols-2 gap-3 p-5 md:grid-cols-3">
         {images.map((name) => (
           <button key={name} onClick={() => setOpen(name)} className="group overflow-hidden rounded-lg border border-line text-left">
-            <img src={api.evidenceUrl(runId, name)} alt={name} loading="lazy" className="aspect-[4/3] w-full bg-surface-2 object-cover object-top transition group-hover:opacity-90" />
+            <img src={api.evidenceUrl(runId, name, scope)} alt={name} loading="lazy" className="aspect-[4/3] w-full bg-surface-2 object-cover object-top transition group-hover:opacity-90" />
             <p className="truncate border-t border-line px-2 py-1.5 font-mono text-[10px] text-ink-3">{name}</p>
           </button>
         ))}
@@ -521,7 +524,7 @@ function Evidence({ runId, names }: { runId: string; names: string[] }) {
                 <X className="size-4" />
               </button>
             </div>
-            <img src={api.evidenceUrl(runId, open)} alt={open} className="block w-full" />
+            <img src={api.evidenceUrl(runId, open, scope)} alt={open} className="block w-full" />
           </div>
         </div>
       )}

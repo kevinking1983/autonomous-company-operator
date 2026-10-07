@@ -233,6 +233,20 @@ async def test_submission_counts_whichever_grant_the_guard_used(
     assert [r["amount"] for r in sandbox.rows("pay_refunds") if r["order_id"] == "QB-48241"] == [40000]
 
 
+async def test_declaring_one_action_on_another_actions_button_says_so(
+    op: Driver, sandbox: LiveSandbox
+) -> None:
+    # Regression (found by the core eval): the operator declared ops.raise_incident on the restaurant's
+    # "Flag for quality review" button. It was told only that ops.flag_restaurant was not authorised, read
+    # that as a policy wall, and kept clicking the same button instead of finding the incident form.
+    await op.open("ops", "restaurants/REST-02")
+    result = await op.click('button "Flag for quality review"', "ops.raise_incident", restaurant_id="REST-02")
+    assert result.error == "invalid_input"
+    assert "submits ops.flag_restaurant, not the ops.raise_incident you declared" in result.output
+    assert "POST /ops/incidents" in result.output
+    assert next(r for r in sandbox.rows("ops_restaurants") if r["id"] == "REST-02")["flagged"] == 0
+
+
 async def test_forbidden_action_is_denied(op: Driver, sandbox: LiveSandbox) -> None:
     flagged = await op.open("ops", "restaurants/REST-02")
     assert flagged.ok

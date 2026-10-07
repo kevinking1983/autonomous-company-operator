@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
-from collections.abc import AsyncIterator
+import subprocess
+import sys
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +28,9 @@ from company_operator import __version__
 from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack, load_pack
 from company_operator.config import get_settings
+from company_operator.evals import CASES, PROFILES, SUITES
+from company_operator.evals.harness import EvalStore, resolve_pairs, scorecard
+from company_operator.evals.world import Sandbox
 from company_operator.memory.store import OperatorDB
 from company_operator.policy import PolicyEngine
 from company_operator.queue import PRIORITY, TaskQueue
@@ -178,6 +185,28 @@ def get_store() -> RunStore:
 Store = Annotated[RunStore, Depends(get_store)]
 
 
+@lru_cache
+def get_evals() -> EvalStore:
+    return EvalStore(get_settings().evals_dir)
+
+
+Evals = Annotated[EvalStore, Depends(get_evals)]
+
+
+def get_scoped_store(store: Store, evals: Evals, scope: str | None = None) -> RunStore:
+    """The operator's own runs, or with ?scope=eval:<eval id>:<case>:<profile> a run made by an eval."""
+    if not scope:
+        return store
+    match = re.fullmatch(r"eval:([\w-]+):(\w+):(\w+)", scope)
+    if not match or match.group(1) not in evals.list():
+        raise HTTPException(404, f"No such scope {scope}")
+    eval_id, case, profile = match.groups()
+    return RunStore(evals.dir(eval_id) / "runs" / f"{case}__{profile}" / "runs")
+
+
+RunScope = Annotated[RunStore, Depends(get_scoped_store)]
+
+
 def queue_of(db: OperatorDB) -> TaskQueue:
     return TaskQueue(db)
 
@@ -300,24 +329,24 @@ def _run_dir(store: RunStore, run_id: str) -> Path:
 
 
 @app.get("/runs/{run_id}")
-def get_run(run_id: str, store: Store) -> dict[str, Any]:
+def get_run(run_id: str, store: RunScope) -> dict[str, Any]:
     _run_dir(store, run_id)
     return store.load(run_id).model_dump()
 
 
 @app.get("/runs/{run_id}/report")
-def get_report(run_id: str, store: Store) -> dict[str, Any]:
+def get_report(run_id: str, store: RunScope) -> dict[str, Any]:
     run_dir = _run_dir(store, run_id)
     return build_report(store.load(run_id), load_events(run_dir), run_dir)
 
 
 @app.get("/runs/{run_id}/events")
-def get_events(run_id: str, store: Store, after: int = 0) -> list[dict[str, Any]]:
+def get_events(run_id: str, store: RunScope, after: int = 0) -> list[dict[str, Any]]:
     return [e for e in load_events(_run_dir(store, run_id)) if e["seq"] > after]
 
 
 @app.get("/runs/{run_id}/stream")
-async def stream_events(run_id: str, store: Store, after: int = 0) -> StreamingResponse:
+async def stream_events(run_id: str, store: RunScope, after: int = 0) -> StreamingResponse:
     """Server-Sent Events: every audit event of the run as it happens (the dashboard's live view)."""
     run_dir = _run_dir(store, run_id)
 
@@ -343,7 +372,7 @@ async def stream_events(run_id: str, store: Store, after: int = 0) -> StreamingR
 
 
 @app.get("/runs/{run_id}/evidence/{name}")
-def evidence(run_id: str, name: str, store: Store) -> FileResponse:
+def evidence(run_id: str, name: str, store: RunScope) -> FileResponse:
     folder = _run_dir(store, run_id) / "evidence"
     path = (folder / name).resolve()
     if path.parent != folder.resolve() or not path.is_file():  # no ../ escapes
@@ -355,7 +384,7 @@ def evidence(run_id: str, name: str, store: Store) -> FileResponse:
 
 
 @app.get("/runs/{run_id}/live.jpg")
-def live_frame(run_id: str, store: Store) -> FileResponse:
+def live_frame(run_id: str, store: RunScope) -> FileResponse:
     """What the operator's browser shows right now (updated after every browser action)."""
     path = _run_dir(store, run_id) / LIVE_FRAME
     if not path.exists():
@@ -371,7 +400,7 @@ def list_runs(store: Store, limit: int = 50) -> list[dict[str, Any]]:
 
 
 @app.get("/runs/{run_id}/pages")
-def run_pages(run_id: str, store: Store) -> list[dict[str, Any]]:
+def run_pages(run_id: str, store: RunScope) -> list[dict[str, Any]]:
     """The pages the operator looked at during the run, latest version of each: what it actually saw."""
     _run_dir(store, run_id)
     pages: dict[str, dict[str, Any]] = {}
@@ -504,6 +533,194 @@ def company_pack(pack: Pack) -> dict[str, Any]:
         "records": {k: v.model_dump() for k, v in pack.records.items()},
         "guides": {k: v.model_dump() for k, v in pack.guides.items()},
     }
+
+
+# ───────────────────────── reliability lab: evals and the fault switchboard ─────────────────────────
+
+
+@lru_cache
+def get_sandbox() -> Sandbox:
+    settings = get_settings()
+    return Sandbox(settings.sandbox_url, settings.sandbox_control_key, timeout=10)
+
+
+def launch_eval(eval_dir: Path, eval_id: str) -> int:
+    """Run the eval in its own process (it takes minutes to hours); its output goes to log.txt."""
+    with (eval_dir / "log.txt").open("ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "company_operator.evals.cli", "--id", eval_id],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,  # keeps running if the API restarts
+        )
+    return process.pid
+
+
+@lru_cache
+def get_launcher() -> Callable[[Path, str], int]:
+    return launch_eval
+
+
+SandboxDep = Annotated[Sandbox, Depends(get_sandbox)]
+Launcher = Annotated[Callable[[Path, str], int], Depends(get_launcher)]
+
+
+def _alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _eval_meta(evals: EvalStore, eval_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"[\w-]+", eval_id) or eval_id not in evals.list():
+        raise HTTPException(404, f"No eval {eval_id}")
+    meta = evals.meta(eval_id)
+    if meta["status"] in ("queued", "running", "stopping") and meta.get("pid") and not _alive(meta["pid"]):
+        meta = evals.update(eval_id, status="stopped", current=None, reason="the eval process ended")
+    return meta
+
+
+@app.get("/evals/catalog")
+def eval_catalog() -> dict[str, Any]:
+    """What can be run: suites, cases and fault profiles."""
+    return {
+        "suites": [
+            {"id": k, **{f: v[f] for f in ("label", "description")}, "pairs": v["pairs"]}
+            for k, v in SUITES.items()
+        ],
+        "cases": [
+            {
+                "key": c.key,
+                "ticket_id": c.ticket_id,
+                "summary": c.summary,
+                "tags": list(c.tags),
+                "approval": c.approval,
+            }
+            for c in CASES.values()
+        ],
+        "profiles": [
+            {
+                "name": p.name,
+                "label": p.label,
+                "description": p.description,
+                "faults": p.faults,
+                "applies_to": list(p.applies_to),
+            }
+            for p in PROFILES.values()
+        ],
+    }
+
+
+@app.get("/evals")
+def list_evals(evals: Evals) -> list[dict[str, Any]]:
+    out = []
+    for eval_id in evals.list():
+        meta = _eval_meta(evals, eval_id)
+        card = scorecard(evals.results(eval_id))
+        out.append(
+            meta
+            | {
+                "total": len(meta["pairs"]),
+                "done": card["runs"],
+                "passed": card["passed"],
+                "scored": card["scored"],
+                "errors": card["errors"],
+                "pass_rate": card["pass_rate"],
+            }
+        )
+    return out
+
+
+@app.get("/evals/{eval_id}")
+def get_eval(eval_id: str, evals: Evals) -> dict[str, Any]:
+    meta = _eval_meta(evals, eval_id)
+    results = evals.results(eval_id)
+    return {"meta": meta, "results": [r.to_json() for r in results], "scorecard": scorecard(results)}
+
+
+@app.get("/evals/{eval_id}/log")
+def eval_log(eval_id: str, evals: Evals, lines: int = 40) -> dict[str, Any]:
+    _eval_meta(evals, eval_id)
+    path = evals.dir(eval_id) / "log.txt"
+    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    return {"lines": text.splitlines()[-lines:]}
+
+
+class EvalBody(BaseModel):
+    suite: str | None = None
+    cases: list[str] = []
+    profiles: list[str] = []
+
+
+@app.post("/evals")
+def start_eval(body: EvalBody, evals: Evals, launcher: Launcher) -> dict[str, Any]:
+    try:
+        pairs = resolve_pairs(body.suite, body.cases, body.profiles)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    if not pairs:
+        raise HTTPException(422, "Nothing to run: no fault profile applies to those cases")
+    running = [
+        m
+        for m in (_eval_meta(evals, i) for i in evals.list())
+        if m["status"] in ("queued", "running", "stopping")
+    ]
+    if running:
+        raise HTTPException(
+            409, f"Eval {running[0]['id']} is still running; one at a time (they share the sandbox)."
+        )
+    label = SUITES[body.suite]["label"] if body.suite else f"{len(pairs)} runs"
+    eval_id = evals.create(pairs, label=label, models=get_settings().model_list)
+    return evals.update(eval_id, pid=launcher(evals.dir(eval_id), eval_id))
+
+
+@app.post("/evals/{eval_id}/resume")
+def resume_eval(eval_id: str, evals: Evals, launcher: Launcher) -> dict[str, Any]:
+    meta = _eval_meta(evals, eval_id)
+    if meta["status"] in ("queued", "running", "stopping"):
+        raise HTTPException(409, "It is still running")
+    evals.update(eval_id, status="queued", reason=None)
+    return evals.update(eval_id, pid=launcher(evals.dir(eval_id), eval_id))
+
+
+@app.post("/evals/{eval_id}/stop")
+def stop_eval(eval_id: str, evals: Evals) -> dict[str, Any]:
+    """Stop after the run in progress (stopping mid-run would leave the sandbox half-changed)."""
+    meta = _eval_meta(evals, eval_id)
+    if meta["status"] not in ("queued", "running"):
+        raise HTTPException(409, f"It is {meta['status']}")
+    return evals.update(eval_id, status="stopping")
+
+
+def _sandbox_call(fn: Callable[[], Any]) -> Any:
+    try:
+        return fn()
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"The sandbox did not answer: {exc}") from None
+
+
+@app.get("/sandbox/faults")
+def sandbox_faults(sandbox: SandboxDep) -> dict[str, Any]:
+    """The live sandbox's fault switchboard: its configuration and the faults injected so far."""
+    data: dict[str, Any] = _sandbox_call(sandbox.faults)
+    return {"config": data["config"], "injected": len(data["log"]), "recent": data["log"][-10:]}
+
+
+@app.put("/sandbox/faults")
+def set_sandbox_faults(config: dict[str, Any], sandbox: SandboxDep) -> dict[str, Any]:
+    _sandbox_call(lambda: sandbox.set_faults(config))
+    return sandbox_faults(sandbox)
+
+
+@app.post("/sandbox/reset")
+def reset_sandbox(sandbox: SandboxDep) -> dict[str, Any]:
+    """Back to the seeded world, faults off. Everything done in the sandbox since is lost."""
+    _sandbox_call(sandbox.reset)
+    return sandbox_faults(sandbox)
 
 
 def create_server() -> FastAPI:

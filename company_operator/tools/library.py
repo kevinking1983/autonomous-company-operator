@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import mimetypes
 import re
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
 from company_operator.company_pack.models import Fact
 from company_operator.tools.base import Tool, ToolContext, ToolInput, ToolRegistry, ToolResult
@@ -72,8 +72,18 @@ class BrowserSnapshot(Tool[SnapshotInput]):
 NOT_SENT = "no {action} request was sent by this click"
 
 
+def element_ref(value: str) -> str:
+    """Accept a ref the way models tend to write it: "e12", "[e12]", "[e12 -> /path]" or "ref e12"."""
+    found = re.search(r"\be\d+\b", value)
+    return found.group(0) if found else value.strip()
+
+
+# An element ref from the latest snapshot, normalised before any tool sees it.
+Ref = Annotated[str, AfterValidator(element_ref)]
+
+
 class ClickInput(ToolInput):
-    ref: str = Field(description="Element ref from the latest snapshot, e.g. 'e12'.")
+    ref: Ref = Field(description="Element ref from the latest snapshot, e.g. 'e12'.")
     action: str | None = Field(
         None,
         description="If this click submits a change, the Company Pack action it performs (e.g. 'payments.refund'). "
@@ -113,6 +123,17 @@ class BrowserClick(Tool[ClickInput]):
                     )
         sent_before = ctx.policy.sent.get(args.action, 0) if args.action else 0
         state = await ctx.browser.click(args.ref)
+        wrong = [a for a in state.blocked_actions if a != args.action]
+        if args.action and state.error == "policy" and wrong and len(wrong) == len(state.blocked_actions):
+            # Not a policy question: the control does something other than what was declared.
+            declared = ctx.pack.action(args.action)
+            where = ", ".join(f"{r.method} {r.path}" for r in declared.requests)
+            state.error = "invalid_input"
+            state.note = (
+                f"Nothing was sent: this control submits {', '.join(sorted(set(wrong)))}, not the {args.action} "
+                f"you declared. {args.action} is: {declared.description} (it is submitted as {where}). "
+                "Find the control that does that, which may be on another page."
+            )
         if grant and args.action and ctx.policy.sent.get(args.action, 0) == sent_before and not state.error:
             # Nothing matching the declared action was submitted, e.g. the click opened a confirmation page,
             # or the browser refused to submit a form with a required field left empty.
@@ -137,7 +158,7 @@ class BrowserClick(Tool[ClickInput]):
 
 
 class FillInput(ToolInput):
-    ref: str = Field(description="Ref of a textbox or textarea.")
+    ref: Ref = Field(description="Ref of a textbox or textarea, e.g. 'e12'.")
     value: str
 
 
@@ -151,7 +172,7 @@ class BrowserFill(Tool[FillInput]):
 
 
 class SelectInput(ToolInput):
-    ref: str = Field(description="Ref of a combobox (select).")
+    ref: Ref = Field(description="Ref of a combobox (select), e.g. 'e12'.")
     option: str = Field(description="Visible option text or option value.")
 
 

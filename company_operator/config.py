@@ -25,8 +25,10 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
 
-    # Base URL of the sandboxed company systems.
+    # Base URL of the sandboxed company systems, and the key to its control API (evals and the
+    # dashboard's fault switchboard use it; the operator never does).
     sandbox_url: str = "http://127.0.0.1:8100"
+    sandbox_control_key: str = "sandbox-control"
 
     # Browser automation. Leave the executable unset to use Playwright's own Chromium.
     browser_headless: bool = True
@@ -52,6 +54,10 @@ class Settings(BaseSettings):
     @property
     def runs_dir(self) -> Path:
         return self.data_dir / "runs"
+
+    @property
+    def evals_dir(self) -> Path:
+        return self.data_dir / "evals"
 
     @property
     def company_pack_dir(self) -> Path:

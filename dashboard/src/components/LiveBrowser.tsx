@@ -9,7 +9,7 @@ const REFRESH_MS = 1500
  * What the operator's browser shows: a frame saved after every browser action, re-fetched while the run is
  * working. Once the run ends, the last frame stays as "the last page it saw".
  */
-export function LiveBrowser({ runId, working, url }: { runId: string; working: boolean; url: string | null }) {
+export function LiveBrowser({ runId, scope, working, url }: { runId: string; scope?: string | null; working: boolean; url: string | null }) {
   const [tick, setTick] = useState(0)
   const [failedTick, setFailedTick] = useState<number | null>(null)
 
@@ -39,7 +39,7 @@ export function LiveBrowser({ runId, working, url }: { runId: string; working: b
       ) : (
         <div className="p-3">
           <img
-            src={`${api.liveUrl(runId)}?t=${tick}`}
+            src={`${api.liveUrl(runId, scope)}${scope ? '&' : '?'}t=${tick}`}
             alt={`The operator's browser${url ? ` at ${url}` : ''}`}
             onError={() => setFailedTick(tick)}
             className="w-full rounded-lg border border-line bg-surface-2"

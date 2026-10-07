@@ -1,4 +1,4 @@
-.PHONY: install api run worker sandbox sandbox-reset test lint format typecheck check dashboard dashboard-build
+.PHONY: install api run worker eval sandbox sandbox-reset test lint format typecheck check dashboard dashboard-build
 
 install:            ## Install Python + dashboard dependencies and the Chromium browser
 	uv sync
@@ -13,6 +13,9 @@ run:                ## Resolve one ticket end to end with a fresh sandbox: make 
 
 worker:             ## Work through the task queue (add tasks with: uv run operator-run --enqueue --ticket TKT-1001)
 	uv run operator-worker
+
+eval:               ## Score the operator on known scenarios: make eval SUITE=smoke (smoke, core, reliability)
+	uv run operator-eval --suite $(or $(SUITE),smoke)
 
 sandbox:            ## Run the QuickBite sandbox (fresh world) on http://127.0.0.1:8100
 	uv run quickbite-sandbox

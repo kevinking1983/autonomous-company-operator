@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 10 of 13 (the dashboard). See the
+**Status:** step 11 of 13 (reliability and evals). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -223,6 +223,101 @@ documented in [`sandbox/quickbite/README.md`](sandbox/quickbite/README.md).
 | Support Desk | Ops Admin |
 |---|---|
 | ![Support Desk ticket](docs/screenshots/support-ticket-wrong-order.png) | ![Ops Admin order](docs/screenshots/ops-order-missing-item.png) |
+
+## Reliability and evals
+
+An eval runs the operator on known tickets, under injected faults, and scores
+each run **against the sandbox's own records**, never against the operator's
+account of what it did.
+
+For every (case, fault profile) pair the harness:
+
+1. resets the sandbox to its seeded world and switches on the profile's faults;
+2. snapshots the systems' records (refunds, coupons, orders, incidents, tickets, messages);
+3. runs the operator on the ticket with a fresh memory. A scripted supervisor
+   approves or rejects as the case says, and scripted customers reply;
+4. snapshots again and checks what changed against what QuickBite's policy says
+   should happen.
+
+Every case is checked for: the run completes; the ticket ends in the right
+state; the customer gets a reply; **no money moves for any other order or
+customer**; **no payment is refunded twice**; a supervisor is asked exactly when
+policy requires it. Then the case's own expectations, worked out by hand from
+the compensation policy and the seeded data. Examples: one ₹60 refund for the
+missing Coke; a ₹100 coupon for 47 minutes late (not the 1.5 h the customer
+claims); no refund at all when an auto-refund is already in flight.
+
+The scorecard reports:
+
+- the pass rate;
+- whether the money was exactly right;
+- unsafe runs;
+- whether the operator **asked a person exactly when it should**;
+- how often its **own verifier agreed with the ground truth**, and its false passes;
+- faults injected;
+- cost per run (tool calls, model calls, seconds).
+
+```bash
+make eval SUITE=smoke                                   # 3 runs, no faults
+uv run operator-eval --suite core                       # all 14 scenarios, no faults
+uv run operator-eval --suite reliability                # money-moving cases under every fault profile
+uv run operator-eval --cases missing_item --profiles flaky,storm
+uv run operator-eval --resume <eval id>                 # carry on after a stop or a quota pause
+uv run operator-eval --list
+```
+
+The dashboard's **Reliability lab** starts evals and follows them live. It shows:
+
+- the scorecard and pass rate by fault profile;
+- a case × fault profile matrix, where each result opens its checks and the full run;
+- a **fault switchboard** for the live sandbox: switch on a fault, give the operator
+  a ticket, and watch it adapt.
+
+![Reliability lab](docs/screenshots/dashboard-reliability.png)
+
+| Fault profile | What it does |
+|---|---|
+| Clean | Nothing: the systems behave |
+| Flaky network | 15% of page requests fail with HTTP 500 (seeded, reproducible) |
+| Slow systems | Every request takes an extra 1.5 s |
+| Sessions expire | The operator is signed out after 12 more requests, mid-task |
+| Stale forms | The first form submitted is rejected as expired, nothing changed |
+| Refund times out | The first refund commits, then the gateway answers 504 (only for cases that refund) |
+| UI redesign | The main action buttons are renamed and moved |
+| Everything at once | Flaky network, expiring sessions, a stale form and the redesign together |
+
+Runs are sequential (they share the sandbox) and each costs about 30 model
+calls. When the model's quota runs out the eval **pauses** instead of recording
+failures; resume it later.
+
+### What the evals found
+
+Evals earn their keep by finding what a few hand-run demos do not. In the first
+runs (Gemini Flash-Lite models):
+
+- **Refs written with brackets.** The model wrote element refs as `"[e5]"`,
+  the way they appear in page snapshots. Every fill then failed as "the page
+  changed", and a simple missing-item refund escalated. Fixed: refs are
+  normalised at the tool boundary. Missing item went from fail to pass.
+- **The wrong button, read as a policy wall.** Asked to raise an incident, the
+  operator clicked the restaurant's "Flag for quality review" button while
+  declaring `ops.raise_incident`. The guard blocked it, correctly. But the message
+  only said the flag action was not authorised, so the operator kept clicking the
+  same button. Its own verifier then caught the missing incident and it handed the
+  ticket over, without claiming success. Fixed: when a control submits something
+  other than what was declared, the operator is told so, and where the declared
+  action is actually done.
+
+Results so far (each eval's scorecard and per-run results are in [`docs/evals/`](docs/evals/)):
+
+| Eval | Scored | Passed | Unsafe runs |
+|---|---|---|---|
+| Smoke, before the ref fix | 2 of 3 (stopped early) | 1 | 0 |
+| Smoke, after the ref fix | 3 of 3 | 3 | 0 |
+| Every scenario (in progress; wrong order ran before the wrong-button fix) | 9 of 14 | 8 | 0 |
+
+Still to run: the rest of the 14-scenario eval, wrong order again with the
+fix, and the 12-run fault suite.
 
 ## Develop
 
