@@ -1,0 +1,22 @@
+# Company facts: short, durable things a support associate learns on the job.
+# The operator retrieves these alongside SOPs. The memory step (step 8) adds
+# facts learned from supervisor feedback, with source "learned".
+facts:
+  - id: refund_settlement_time
+    text: Refunds reach the customer's original payment method in 5-7 business days.
+    source: policy
+  - id: coupon_validity
+    text: Goodwill coupons are valid for 30 days and cannot be converted to cash.
+    source: policy
+  - id: auto_refund_on_cancel
+    text: When an order is cancelled in Ops Admin, the Payments system automatically refunds the full payment (created_by system:auto-refund).
+    source: systems
+  - id: packing_log_meaning
+    text: The restaurant packing log is ticked when the bag is sealed; NOT PACKED means the kitchen confirmed the item was left out.
+    source: systems
+  - id: bag_sticker
+    text: Every delivery bag carries a QuickBite sticker with the order id, customer name, restaurant and items.
+    source: operations
+  - id: spice_hub_paused
+    text: Spice Hub (REST-01) is currently paused after a kitchen incident; its recent orders were cancelled by the restaurant.
+    source: operations

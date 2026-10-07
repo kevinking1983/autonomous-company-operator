@@ -1,0 +1,68 @@
+# Every action the operator may take, the system it happens in, and its side
+# effect. The policy engine gates actions on this data, not on prompt wording.
+#
+#   read          looks only, changes nothing
+#   write         changes records, easy to correct
+#   money         moves money; must satisfy refund/approval policy
+#   irreversible  cannot be undone once done
+actions:
+  # Support Desk
+  - id: support.read_ticket
+    system: support
+    effect: read
+    description: Open the ticket queue or a ticket, its conversation, attachments and the customer's other tickets.
+  - id: support.reply_to_customer
+    system: support
+    effect: irreversible        # a message, once sent, cannot be unsent
+    description: Send a public reply to the customer, optionally changing the ticket status.
+  - id: support.add_internal_note
+    system: support
+    effect: write
+    description: Add an internal note visible only to staff.
+  - id: support.update_ticket
+    system: support
+    effect: write
+    description: Change the ticket's status or category, or link it as a duplicate of another ticket.
+
+  # Ops Admin
+  - id: ops.read_order
+    system: ops
+    effect: read
+    description: Look up orders, items, the delivery timeline, packing log, customers, restaurants, riders and incidents.
+  - id: ops.cancel_order
+    system: ops
+    effect: irreversible
+    description: Cancel an order that has not been picked up. A paid order is refunded automatically.
+  - id: ops.raise_incident
+    system: ops
+    effect: write
+    description: Raise an incident against a restaurant or rider.
+  - id: ops.flag_restaurant
+    system: ops
+    effect: write
+    description: Flag a restaurant for quality review.
+
+  # Payments Console
+  - id: payments.read
+    system: payments
+    effect: read
+    description: Look up payments, refunds and coupons.
+  - id: payments.refund
+    system: payments
+    effect: money
+    description: Refund part or all of a captured payment.
+  - id: payments.issue_coupon
+    system: payments
+    effect: money
+    description: Issue a goodwill coupon to a customer.
+
+# Things the operator must never do, whatever a ticket or customer asks.
+forbidden:
+  - id: no_other_customer_data
+    rule: Never reveal another customer's name, phone, address or order details to a customer.
+  - id: no_unflag_restaurant
+    rule: Never remove a quality-review flag from a restaurant; only Ops leads clear flags.
+  - id: no_cash_or_bank_promises
+    rule: Never promise cash, bank transfers or refunds to a different account or payment method.
+  - id: no_policy_override_without_approval
+    rule: Never give more than policy allows unless a supervisor has approved it in writing.

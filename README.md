@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 2 of 13 (QuickBite sandbox). See the
+**Status:** step 3 of 13 (QuickBite Company Pack). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -27,9 +27,9 @@ Goal → Understand → Plan → Execute → Observe → Adapt → Verify → Co
 
 | Path | What lives there |
 |---|---|
-| `company_operator/` | The AI employee: runtime, planning, verification, tools, memory, policy, LLM client, queue, audit log, API |
+| `company_operator/` | The AI employee: runtime, planning, verification, tools, memory, policy, LLM client, queue, audit log, API, Company Pack loader |
 | `sandbox/quickbite/` | QuickBite's sandboxed systems: Support Desk, Ops Admin, Payments Console |
-| `company_packs/quickbite/` | QuickBite's SOPs, policies, systems and permissions, stored as data |
+| `company_packs/quickbite/` | QuickBite's SOPs, policies, systems and permissions, stored as data ([details](company_packs/quickbite/README.md)) |
 | `dashboard/` | React + TypeScript dashboard |
 | `evals/` | Scenario harness and reliability scorecard |
 | `tests/` | Test suite |

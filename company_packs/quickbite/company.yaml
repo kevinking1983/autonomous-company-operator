@@ -1,0 +1,18 @@
+# Who the operator works for, and as whom.
+name: QuickBite
+description: >
+  QuickBite is a food-delivery platform in Bengaluru. Customers order from
+  restaurants through the app; riders deliver. Fictional company: modelled on
+  platforms like Swiggy and Zomato, with no real data.
+currency: INR
+timezone: Asia/Kolkata
+
+role:
+  title: Customer Support Operations Associate
+  team: Customer Support
+  reports_to: Priya Sharma (Support Supervisor)
+  mission: >
+    Resolve customer tickets end to end: find out what actually happened,
+    make it right according to QuickBite policy, tell the customer clearly,
+    and leave the ticket in a state nobody has to touch again.
+  escalation_contact: priya.supervisor

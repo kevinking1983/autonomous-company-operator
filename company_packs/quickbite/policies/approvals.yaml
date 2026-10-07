@@ -1,0 +1,45 @@
+# When a human must say yes before the operator acts. A proposed action is
+# described by facts (amount, reason, customer history...). If ANY rule
+# matches, the action waits in the approval inbox.
+#
+# Facts the operator supplies:
+#   action               permission id, e.g. payments.refund
+#   amount               rupees being refunded or given as a coupon
+#   reason               the issue type, e.g. missing_item
+#   full_order_refund    true if the refund covers the whole order
+#   customer_claims_30d  refund claims by this customer in the last 30 days
+#   batch_size           number of orders affected by one request
+#   off_policy           true if the action goes beyond what policy allows
+
+approvers: [priya.supervisor]
+
+rules:
+  - id: high_value
+    description: Any refund or coupon above ₹500.
+    applies_to: [payments.refund, payments.issue_coupon]
+    when: {fact: amount, op: gt, value: 500}
+
+  - id: full_order_refund
+    description: Refunding an entire order.
+    applies_to: [payments.refund]
+    when: {fact: full_order_refund, op: eq, value: true}
+
+  - id: repeat_claimant
+    description: Customer with 3 or more refund claims in the last 30 days (possible abuse).
+    applies_to: [payments.refund, payments.issue_coupon]
+    when: {fact: customer_claims_30d, op: gte, value: 3}
+
+  - id: payment_reversal
+    description: Reversing a duplicate charge.
+    applies_to: [payments.refund]
+    when: {fact: reason, op: eq, value: duplicate_charge}
+
+  - id: large_batch
+    description: One request that would act on more than 10 orders.
+    applies_to: [payments.refund, payments.issue_coupon, ops.cancel_order]
+    when: {fact: batch_size, op: gt, value: 10}
+
+  - id: off_policy
+    description: Anything beyond what policy allows (goodwill gestures, exceptions).
+    applies_to: [payments.refund, payments.issue_coupon, ops.cancel_order]
+    when: {fact: off_policy, op: eq, value: true}

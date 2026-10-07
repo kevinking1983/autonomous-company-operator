@@ -1,0 +1,34 @@
+# The internal systems the operator works in. URLs are relative to the
+# sandbox base URL (ACO_SANDBOX_URL). Passwords are never stored here: each
+# credential names an environment variable, with a sandbox-only default.
+systems:
+  support:
+    name: Support Desk
+    base_path: /support/
+    purpose: Customer tickets. The conversation with the customer, attachments, status, category and duplicate links.
+    holds: [tickets, customer messages, photo attachments, ticket status and category]
+    credentials:
+      username: ai.operator
+      password_env: QUICKBITE_SUPPORT_PASSWORD
+      sandbox_default: operator-sandbox
+
+  ops:
+    name: Ops Admin
+    base_path: /ops/
+    purpose: What actually happened to an order, and who was involved.
+    holds: [orders and items, delivery timeline with promised and actual times, restaurant packing log,
+            restaurants, riders, customer claim history (last 30 days), incidents]
+    credentials:
+      username: ai.operator
+      password_env: QUICKBITE_OPS_PASSWORD
+      sandbox_default: operator-sandbox
+
+  payments:
+    name: Payments Console
+    base_path: /payments/
+    purpose: Money. What the customer was charged, what was refunded, and goodwill coupons.
+    holds: [payments per order, refund ledger with status and expected settlement date, coupons]
+    credentials:
+      username: ai.operator
+      password_env: QUICKBITE_PAYMENTS_PASSWORD
+      sandbox_default: operator-sandbox

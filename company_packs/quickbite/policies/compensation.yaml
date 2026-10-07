@@ -1,0 +1,54 @@
+# What QuickBite gives a customer for each kind of problem.
+# Amounts are in rupees. Percentages apply to the price the customer paid
+# for the affected item(s) or order.
+
+refund_settlement: "5-7 business days to the original payment method"
+coupon_validity_days: 30
+
+issues:
+  missing_item:
+    remedy: refund
+    amount: {basis: item_price, percent: 100}
+    requires_evidence: The item must be on the order. A "NOT PACKED" entry in the packing log confirms the claim.
+    follow_up: []
+
+  food_quality:
+    remedy: refund
+    amount: {basis: item_price, percent: 50}
+    requires_evidence: The affected item must be on the order.
+    follow_up:
+      - {action: ops.raise_incident, target: restaurant, category: food_quality}
+
+  wrong_order:
+    remedy: refund
+    amount: {basis: order_total, percent: 100}
+    requires_evidence: A photo or description showing food that is not on the order.
+    follow_up:
+      - {action: ops.raise_incident, target: restaurant, category: wrong_order}
+
+  late_delivery:
+    remedy: coupon
+    # Delay is measured from the system timeline (promised vs delivered), never from the customer's estimate.
+    tiers:
+      - {min_minutes_late: 0,  max_minutes_late: 15, coupon: 0}
+      - {min_minutes_late: 15, max_minutes_late: 30, coupon: 50}
+      - {min_minutes_late: 30, max_minutes_late: 60, coupon: 100}
+      - {min_minutes_late: 60, coupon: 150}
+    follow_up: []
+
+  cancelled_but_charged:
+    remedy: refund
+    amount: {basis: payment, percent: 100}
+    requires_evidence: The order is cancelled, a payment was captured, and no refund already exists for it.
+    follow_up: []
+
+  duplicate_charge:
+    remedy: refund
+    amount: {basis: duplicate_payment, percent: 100}
+    requires_evidence: Two or more captured payments for the same order. Keep the first and refund the rest.
+    follow_up: []
+
+  rider_behaviour:
+    remedy: none
+    follow_up:
+      - {action: ops.raise_incident, target: rider, category: rude_behaviour}
