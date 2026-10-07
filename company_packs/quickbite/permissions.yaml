@@ -5,8 +5,15 @@
 #   write         changes records, easy to correct
 #   money         moves money; must satisfy refund/approval policy
 #   irreversible  cannot be undone once done
+#
+# `requests` ties each action to the exact HTTP requests that perform it. The
+# browser's request guard checks every non-GET request against these: a
+# request that matches no granted action is blocked before it leaves the
+# browser. {name} path segments and `bind` fields must equal the facts the
+# action was authorised with, so the operator cannot get approval for a ₹60
+# refund on one payment and then submit ₹600 on another.
 actions:
-  # Support Desk
+  # ── Support Desk ──
   - id: support.read_ticket
     system: support
     effect: read
@@ -15,16 +22,22 @@ actions:
     system: support
     effect: irreversible        # a message, once sent, cannot be unsent
     description: Send a public reply to the customer, optionally changing the ticket status.
+    requests:
+      - {method: POST, path: "/support/tickets/{ticket_id}/reply"}
   - id: support.add_internal_note
     system: support
     effect: write
     description: Add an internal note visible only to staff.
+    requests:
+      - {method: POST, path: "/support/tickets/{ticket_id}/note"}
   - id: support.update_ticket
     system: support
     effect: write
     description: Change the ticket's status or category, or link it as a duplicate of another ticket.
+    requests:
+      - {method: POST, path: "/support/tickets/{ticket_id}/update"}
 
-  # Ops Admin
+  # ── Ops Admin ──
   - id: ops.read_order
     system: ops
     effect: read
@@ -33,28 +46,60 @@ actions:
     system: ops
     effect: irreversible
     description: Cancel an order that has not been picked up. A paid order is refunded automatically.
+    requests:
+      - {method: POST, path: "/ops/orders/{order_id}/cancel"}
   - id: ops.raise_incident
     system: ops
     effect: write
     description: Raise an incident against a restaurant or rider.
+    requests:
+      - {method: POST, path: "/ops/incidents"}
   - id: ops.flag_restaurant
     system: ops
     effect: write
     description: Flag a restaurant for quality review.
+    requests:
+      - {method: POST, path: "/ops/restaurants/{restaurant_id}/flag", form: {flagged: "1"}}
+  - id: ops.unflag_restaurant
+    system: ops
+    effect: write
+    allowed: false
+    description: Remove a restaurant's quality-review flag. Only Ops leads may do this.
+    requests:
+      - {method: POST, path: "/ops/restaurants/{restaurant_id}/flag", form: {flagged: "0"}}
 
-  # Payments Console
+  # ── Payments Console ──
   - id: payments.read
     system: payments
     effect: read
-    description: Look up payments, refunds and coupons.
+    description: Look up payments, refunds and coupons. Includes the refund review page, which changes nothing.
+    requests:
+      - {method: POST, path: "/payments/transactions/{payment_id}/refund"}
   - id: payments.refund
     system: payments
     effect: money
     description: Refund part or all of a captured payment.
+    requests:
+      - method: POST
+        path: "/payments/transactions/{payment_id}/refund/confirm"
+        bind:
+          - {field: amount, fact: amount, scale: 100}     # the form sends paise
+          - {field: reason_code, fact: reason}
   - id: payments.issue_coupon
     system: payments
     effect: money
     description: Issue a goodwill coupon to a customer.
+    requests:
+      - method: POST
+        path: "/payments/coupons"
+        bind:
+          - {field: value, fact: amount}
+          - {field: customer_id, fact: customer_id}
+
+# Signing in and out is allowed in every system without a grant.
+session_requests:
+  - {method: POST, path: "/{system}/login"}
+  - {method: POST, path: "/{system}/logout"}
 
 # Things the operator must never do, whatever a ticket or customer asks.
 forbidden:

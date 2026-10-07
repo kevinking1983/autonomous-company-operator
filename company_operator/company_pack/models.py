@@ -67,11 +67,44 @@ class System(Model):
 # ───────────────────────── permissions ─────────────────────────
 
 
+class Bind(Model):
+    """A submitted form field that must equal an authorised fact (times `scale`)."""
+
+    field: str
+    fact: str
+    scale: float = 1
+
+
+class RequestPattern(Model):
+    """An HTTP request that performs an action. `{name}` path segments capture parameters."""
+
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+    path: str
+    form: dict[str, str] = {}
+    bind: list[Bind] = []
+
+    @property
+    def params(self) -> list[str]:
+        return re.findall(r"\{(\w+)\}", self.path)
+
+    def match(self, method: str, path: str, form: dict[str, str]) -> dict[str, str] | None:
+        """Path parameters if the request matches this pattern, else None."""
+        if method.upper() != self.method:
+            return None
+        regex = "^" + re.sub(r"\\\{(\w+)\\\}", r"(?P<\1>[^/]+)", re.escape(self.path)) + "/?$"
+        found = re.match(regex, path)
+        if found is None or any(form.get(k) != v for k, v in self.form.items()):
+            return None
+        return found.groupdict()
+
+
 class Action(Model):
     id: str
     system: str
     effect: Effect
     description: str
+    allowed: bool = True
+    requests: list[RequestPattern] = []
 
 
 class Forbidden(Model):
@@ -207,6 +240,7 @@ class CompanyPack(Model):
     company: Company
     systems: dict[str, System]
     actions: dict[str, Action]
+    session_requests: list[RequestPattern]
     forbidden: list[Forbidden]
     compensation: CompensationPolicy
     approvals: ApprovalPolicy

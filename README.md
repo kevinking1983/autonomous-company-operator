@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 3 of 13 (QuickBite Company Pack). See the
+**Status:** step 4 of 13 (tools and policy engine). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -37,7 +37,8 @@ Goal → Understand → Plan → Execute → Observe → Adapt → Verify → Co
 
 ## Setup
 
-Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js 22+.
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js 22+. `make install` downloads
+Playwright's Chromium; to use an existing Chromium instead, set `ACO_BROWSER_EXECUTABLE`.
 
 ```bash
 cp .env.example .env

@@ -71,3 +71,11 @@ def test_unknown_field_is_rejected(pack_dir: Path) -> None:
     edit(pack_dir / "company.yaml", "currency: INR", "currency: INR\nmotto: yum")
     with pytest.raises(PackError, match="motto"):
         load_pack(pack_dir)
+
+
+def test_side_effect_without_request_pattern(pack_dir: Path) -> None:
+    edit(pack_dir / "permissions.yaml", '    requests:\n      - {method: POST, path: "/ops/incidents"}\n', "")
+    with pytest.raises(
+        PackError, match=r"ops\.raise_incident: a write action needs at least one request pattern"
+    ):
+        load_pack(pack_dir)

@@ -24,6 +24,7 @@ from company_operator.company_pack.models import (
     CompensationPolicy,
     Forbidden,
     Guide,
+    RequestPattern,
     Sop,
     System,
 )
@@ -100,6 +101,7 @@ def _parse(root: Path) -> CompanyPack:
         company=Company(**_yaml(root / "company.yaml")),
         systems=systems,
         actions=actions,
+        session_requests=[RequestPattern(**r) for r in permissions.get("session_requests", [])],
         forbidden=[Forbidden(**f) for f in permissions.get("forbidden", [])],
         compensation=CompensationPolicy(**_yaml(root / "policies" / "compensation.yaml")),
         approvals=ApprovalPolicy(**_yaml(root / "policies" / "approvals.yaml")),
@@ -118,6 +120,16 @@ def validate(pack: CompanyPack) -> list[str]:
             problems.append(f"action {action.id}: unknown system {action.system!r}")
         if not action.id.startswith(f"{action.system}."):
             problems.append(f"action {action.id}: id must start with its system name")
+        if action.effect != "read" and not action.requests:
+            problems.append(
+                f"action {action.id}: a {action.effect} action needs at least one request pattern"
+            )
+        system = pack.systems.get(action.system)
+        for pattern in action.requests:
+            if system and not pattern.path.startswith(system.base_path):
+                problems.append(
+                    f"action {action.id}: request path {pattern.path} is outside {system.base_path}"
+                )
 
     for sop in pack.sops.values():
         problems += [f"SOP {sop.id}: unknown system {s!r}" for s in sop.systems if s not in pack.systems]

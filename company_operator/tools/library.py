@@ -1,0 +1,286 @@
+"""The operator's tools. All generic: nothing here knows about refunds or tickets.
+
+Company-specific behaviour comes from the Company Pack (which systems exist,
+what each action means, what needs approval) and from the operator reading
+the screens, never from bespoke functions like `refund_customer()`.
+"""
+
+from __future__ import annotations
+
+import mimetypes
+import re
+from typing import Any
+from urllib.parse import urlsplit
+
+from pydantic import Field
+
+from company_operator.company_pack.models import Fact
+from company_operator.tools.base import Tool, ToolContext, ToolInput, ToolRegistry, ToolResult
+from company_operator.tools.browser import PageState
+
+
+def page_result(state: PageState, **data: Any) -> ToolResult:
+    data = {"url": state.url, "status": state.status, "alerts": state.alerts, **data}
+    if state.error:
+        return ToolResult.failure(state.error, state.render(), data=data)
+    return ToolResult.success(state.render(), data=data)
+
+
+# ───────────────────────── browser ─────────────────────────
+
+
+class OpenInput(ToolInput):
+    system: str | None = Field(
+        None, description="System id from the Company Pack, e.g. 'support', 'ops', 'payments'."
+    )
+    path: str = Field(
+        "", description="Path within the system (e.g. 'tickets/TKT-1001' or 'orders?q=QB-1') or a full URL."
+    )
+
+
+class BrowserOpen(Tool[OpenInput]):
+    name = "browser_open"
+    description = (
+        "Open a page in one of the company's systems and return a snapshot of it. Signs in automatically. "
+        "Failed page loads are retried automatically."
+    )
+    input_model = OpenInput
+
+    async def run(self, ctx: ToolContext, args: OpenInput) -> ToolResult:
+        if args.system and args.system not in ctx.pack.systems:
+            return ToolResult.failure(
+                "invalid_input", f"Unknown system {args.system!r}. Known: {', '.join(ctx.pack.systems)}"
+            )
+        return page_result(await ctx.browser.open(ctx.browser.url_for(args.system, args.path)))
+
+
+class SnapshotInput(ToolInput):
+    pass
+
+
+class BrowserSnapshot(Tool[SnapshotInput]):
+    name = "browser_snapshot"
+    description = "Return a fresh snapshot of the current page, with new element refs."
+    input_model = SnapshotInput
+
+    async def run(self, ctx: ToolContext, args: SnapshotInput) -> ToolResult:
+        return page_result(await ctx.browser.state())
+
+
+class ClickInput(ToolInput):
+    ref: str = Field(description="Element ref from the latest snapshot, e.g. 'e12'.")
+    action: str | None = Field(
+        None,
+        description="If this click submits a change, the Company Pack action it performs (e.g. 'payments.refund'). "
+        "Required for anything that is not a read; undeclared changes are blocked.",
+    )
+    facts: dict[str, Fact] = Field(
+        default_factory=dict,
+        description="Facts the action is authorised against, e.g. {payment_id, amount, reason, customer_claims_30d}.",
+    )
+
+
+class BrowserClick(Tool[ClickInput]):
+    name = "browser_click"
+    description = (
+        "Click a link, button or menu. To submit a change, declare the action and its facts: policy is checked "
+        "first and the submitted form must match what was declared."
+    )
+    input_model = ClickInput
+
+    async def run(self, ctx: ToolContext, args: ClickInput) -> ToolResult:
+        grant = None
+        if args.action:
+            grant = ctx.policy.find_grant(args.action, args.facts)
+            if grant is None:
+                decision, grant = ctx.policy.authorize(args.action, args.facts)
+                if decision.outcome == "deny":
+                    return ToolResult.failure(
+                        "policy", "Denied by company policy: " + "; ".join(decision.reasons)
+                    )
+                if decision.outcome == "needs_approval":
+                    return ToolResult.failure(
+                        "needs_approval",
+                        f"{args.action} needs supervisor approval ({', '.join(decision.rules)}): "
+                        + "; ".join(decision.reasons)
+                        + ". Use request_approval with the same action and facts, then click again once approved.",
+                        data={"rules": decision.rules},
+                    )
+        uses_before = grant.uses_left if grant else None
+        state = await ctx.browser.click(args.ref)
+        if grant and grant.uses_left == uses_before and grant.uses_left is not None and not state.error:
+            # Nothing matching the declared action was submitted: don't leave a live grant lying around.
+            ctx.policy.revoke(grant.id)
+            state.note = (state.note + " " if state.note else "") + (
+                f"Note: no {args.action} request was sent by this click; the authorisation was withdrawn."
+            )
+        return page_result(state, action=args.action, grant=grant.id if grant else None)
+
+
+class FillInput(ToolInput):
+    ref: str = Field(description="Ref of a textbox or textarea.")
+    value: str
+
+
+class BrowserFill(Tool[FillInput]):
+    name = "browser_fill"
+    description = "Type a value into a text field (replacing what is there). Does not submit anything."
+    input_model = FillInput
+
+    async def run(self, ctx: ToolContext, args: FillInput) -> ToolResult:
+        return page_result(await ctx.browser.fill(args.ref, args.value))
+
+
+class SelectInput(ToolInput):
+    ref: str = Field(description="Ref of a combobox (select).")
+    option: str = Field(description="Visible option text or option value.")
+
+
+class BrowserSelect(Tool[SelectInput]):
+    name = "browser_select"
+    description = "Choose an option in a dropdown. Does not submit anything."
+    input_model = SelectInput
+
+    async def run(self, ctx: ToolContext, args: SelectInput) -> ToolResult:
+        return page_result(await ctx.browser.select(args.ref, args.option))
+
+
+class ScreenshotInput(ToolInput):
+    label: str = Field(description="Short name for what this screenshot proves, e.g. 'refund-RF-70012'.")
+
+
+class BrowserScreenshot(Tool[ScreenshotInput]):
+    name = "browser_screenshot"
+    description = "Save a full-page screenshot of the current page as evidence for the run report."
+    input_model = ScreenshotInput
+
+    async def run(self, ctx: ToolContext, args: ScreenshotInput) -> ToolResult:
+        index = len(list(ctx.evidence_dir.glob("[0-9][0-9]-*.png"))) + 1
+        slug = re.sub(r"[^a-z0-9]+", "-", args.label.lower()).strip("-")[:60] or "page"
+        path = await ctx.browser.screenshot(ctx.evidence_dir / f"{index:02d}-{slug}.png")
+        return ToolResult.success(f"Saved screenshot {path.name} of {ctx.browser.page.url}", evidence=[path])
+
+
+# ───────────────────────── files ─────────────────────────
+
+
+class AttachmentInput(ToolInput):
+    url: str = Field(description="Link to the attachment, as shown in the page snapshot.")
+
+
+class ViewAttachment(Tool[AttachmentInput]):
+    name = "view_attachment"
+    description = "Download an attachment (e.g. a customer's photo), keep it as evidence and show it to you."
+    input_model = AttachmentInput
+
+    async def run(self, ctx: ToolContext, args: AttachmentInput) -> ToolResult:
+        url = ctx.browser.url_for(None, args.url) if args.url.startswith("/") else args.url
+        if urlsplit(url).netloc != ctx.browser.origin:
+            return ToolResult.failure(
+                "policy", "Attachments can only be fetched from the company's own systems."
+            )
+        status, content_type, body = await ctx.browser.fetch_bytes(url)
+        if status == 404:
+            return ToolResult.failure("not_found", f"No attachment at {args.url}")
+        if status >= 400:
+            return ToolResult.failure("transient", f"Could not download attachment ({status})")
+        mime = content_type.split(";")[0].strip()
+        extension = mimetypes.guess_extension(mime) or ".bin"
+        path = ctx.evidence_dir / f"attachment-{urlsplit(url).path.rstrip('/').rsplit('/', 1)[-1]}{extension}"
+        path.write_bytes(body)
+        ctx.log.emit("evidence.saved", kind="attachment", path=str(path), url=url)
+        is_image = mime.startswith("image/")
+        return ToolResult.success(
+            f"Downloaded {mime} attachment ({len(body):,} bytes) to {path.name}."
+            + (" The image is attached for you to look at." if is_image else ""),
+            evidence=[path],
+            images=[path] if is_image else [],
+            data={"content_type": mime, "bytes": len(body)},
+        )
+
+
+# ───────────────────────── policy and people ─────────────────────────
+
+
+class PolicyInput(ToolInput):
+    action: str = Field(description="Company Pack action id, e.g. 'payments.refund'.")
+    facts: dict[str, Fact] = Field(default_factory=dict)
+
+
+class CheckPolicy(Tool[PolicyInput]):
+    name = "check_policy"
+    description = (
+        "Ask whether an action would be allowed, need approval, or be denied, without doing anything. "
+        "Use while planning."
+    )
+    input_model = PolicyInput
+
+    async def run(self, ctx: ToolContext, args: PolicyInput) -> ToolResult:
+        decision = ctx.policy.evaluate(args.action, args.facts)
+        text = f"{args.action}: {decision.outcome}. " + "; ".join(decision.reasons)
+        return ToolResult.success(text, data={"outcome": decision.outcome, "rules": decision.rules})
+
+
+class ApprovalInput(PolicyInput):
+    justification: str = Field(
+        description="What you want to do and why, with the evidence a supervisor needs."
+    )
+
+
+class RequestApproval(Tool[ApprovalInput]):
+    name = "request_approval"
+    description = "Ask a supervisor to approve an action that policy says needs approval."
+    input_model = ApprovalInput
+
+    async def run(self, ctx: ToolContext, args: ApprovalInput) -> ToolResult:
+        decision = ctx.policy.evaluate(args.action, args.facts)
+        if decision.outcome == "allow":
+            return ToolResult.success(f"{args.action} does not need approval; go ahead.")
+        if decision.outcome == "deny":
+            return ToolResult.failure(
+                "policy", "Cannot be approved, it is denied: " + "; ".join(decision.reasons)
+            )
+        request = ctx.human.request_approval(decision, args.justification)
+        return ToolResult.success(
+            f"Approval requested ({request.id}) for {args.action}: {', '.join(decision.rules)}. "
+            "Wait for the decision before acting.",
+            data={"request_id": request.id, "pending": True},
+        )
+
+
+class AskInput(ToolInput):
+    question: str
+    audience: str = Field("supervisor", description="'supervisor' for internal questions.")
+
+
+class AskHuman(Tool[AskInput]):
+    name = "ask_human"
+    description = (
+        "Ask your supervisor a question when you are blocked or something is ambiguous. "
+        "To ask a customer, reply on their ticket instead."
+    )
+    input_model = AskInput
+
+    async def run(self, ctx: ToolContext, args: AskInput) -> ToolResult:
+        request = ctx.human.ask(args.question, args.audience)
+        return ToolResult.success(
+            f"Question sent ({request.id}). Wait for the answer.",
+            data={"request_id": request.id, "pending": True},
+        )
+
+
+def default_registry() -> ToolRegistry:
+    return ToolRegistry(
+        [
+            BrowserOpen(),
+            BrowserSnapshot(),
+            BrowserClick(),
+            BrowserFill(),
+            BrowserSelect(),
+            BrowserScreenshot(),
+            ViewAttachment(),
+            CheckPolicy(),
+            RequestApproval(),
+            AskHuman(),
+        ]
+    )

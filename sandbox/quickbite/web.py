@@ -6,7 +6,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -65,7 +65,15 @@ def current_user(request: Request, system: str) -> dict[str, Any]:
             system,
         )
     if row is None:
-        next_path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        if request.method == "GET":
+            next_path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        else:
+            # A form submitted after the session expired: nothing is saved, and after
+            # signing in the user returns to the page the form was on.
+            referer = urlsplit(request.headers.get("referer", ""))
+            next_path = referer.path if referer.path.startswith(f"/{system}/") else f"/{system}/"
+            if referer.query and next_path != f"/{system}/":
+                next_path += f"?{referer.query}"
         raise LoginRequired(system, next_path)
     return dict(row)
 

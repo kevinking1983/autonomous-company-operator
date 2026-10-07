@@ -25,8 +25,9 @@ class Settings(BaseSettings):
     # Base URL of the sandboxed company systems.
     sandbox_url: str = "http://127.0.0.1:8100"
 
-    # Browser automation.
+    # Browser automation. Leave the executable unset to use Playwright's own Chromium.
     browser_headless: bool = True
+    browser_executable: str | None = None
 
     # LLM provider; chosen at the "agent brain" step.
     llm_provider: str = "unset"
