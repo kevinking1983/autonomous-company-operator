@@ -270,3 +270,77 @@ async def test_tool_budget(
     state = await operator(brain, registry, pack, store).run(new_run(store, max_tool_calls=3), ctx)
     assert state.phase == "escalated" and "budget" in state.outcome_reason
     assert state.counters.tool_calls == 4
+
+
+def batch(*calls: ToolCall) -> Move:
+    return lambda ctx: NextAction(kind="tool", step_id="s1", call=calls[0], then=list(calls[1:]))
+
+
+def refs_on_page(ctx: BrainContext, *starts: str) -> list[str]:
+    from tests.runtime.scripted import ref
+
+    return [ref(ctx, s) for s in starts]
+
+
+async def test_form_batch_runs_in_one_decision(
+    ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
+) -> None:
+    def fill_and_send(c: BrainContext) -> NextAction:
+        body, status, send = refs_on_page(
+            c, 'textarea "Reply to customer"', 'combobox "After sending', 'button "Send reply"'
+        )
+        return batch(
+            ToolCall(tool="browser_fill", arguments={"ref": body, "value": "Sorted, sorry!"}),
+            ToolCall(tool="browser_select", arguments={"ref": status, "option": "resolved"}),
+            ToolCall(tool="browser_click", arguments={"ref": send, "action": "support.reply_to_customer", "facts": {"ticket_id": "TKT-1001"}}),
+        )(c)  # fmt: skip
+
+    brain = ScriptedBrain(moves=[open_("support", "tickets/TKT-1001", step="s1"), fill_and_send])
+    state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
+    assert state.phase == "completed"
+    assert [o.call.tool for o in state.observations] == [
+        "browser_open",
+        "browser_fill",
+        "browser_select",
+        "browser_click",
+    ]
+    assert len(ctx.log.of_type("decision")) == 3  # open, the batch, step_done
+    assert next(t for t in sandbox.rows("support_tickets") if t["id"] == "TKT-1001")["status"] == "resolved"
+
+
+async def test_nothing_runs_after_a_navigation_in_a_batch(
+    ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
+) -> None:
+    brain = ScriptedBrain(
+        moves=[
+            batch(
+                ToolCall(tool="browser_open", arguments={"system": "support", "path": "tickets/TKT-1001"}),
+                ToolCall(tool="browser_fill", arguments={"ref": "e1", "value": "stale ref"}),
+            )
+        ]
+    )
+    state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
+    assert [o.call.tool for o in state.observations] == ["browser_open"]
+    assert ctx.log.of_type("batch.truncated")[0].data["dropped"] == ["browser_fill"]
+
+
+async def test_repeating_a_finished_step_is_redirected_and_bounded(
+    ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
+) -> None:
+    """Regression: a model kept calling step_done for a step that was already done (no tool, no budget)."""
+    brain = ScriptedBrain(plans=[plan("look", "act")], moves=[done("look")] * 30)
+    state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
+    assert state.phase == "escalated" and "Stuck: made the same decision 4 times" in state.outcome_reason
+    ignored = ctx.log.of_type("decision.ignored")
+    assert ignored and "already done. The current step is 'act'" in ignored[0].data["reason"]
+
+
+async def test_decision_budget_bounds_a_wandering_brain(
+    ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
+) -> None:
+    """Different decisions that never finish anything still end, via the decision budget."""
+    wander = [tool("check_policy", "s1", action="payments.read", facts={"n": i}) for i in range(20)]
+    state = await operator(ScriptedBrain(moves=wander), registry, pack, store).run(
+        new_run(store, max_decisions=5), ctx
+    )
+    assert state.phase == "escalated" and "Decision budget of 5 exhausted" in state.outcome_reason

@@ -22,6 +22,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack
 from company_operator.company_pack.models import Sop
 from company_operator.runtime.brain import Brain, BrainContext, NextAction, Verifier
@@ -36,6 +37,8 @@ T = TypeVar("T")
 READ_ONLY_TOOLS = frozenset(
     {"browser_open", "browser_snapshot", "browser_screenshot", "view_attachment", "check_policy"}
 )
+# Tools that only change form fields on the current page; they may be batched before a final call.
+FIELD_TOOLS = frozenset({"browser_fill", "browser_select"})
 BRAIN_RETRIES = 2
 TRANSIENT_BACKOFF_SECONDS = 1.0
 
@@ -182,9 +185,27 @@ class Operator:
         assert state.plan is not None
         if not state.plan.open_steps:
             return self._enter(state, tools, "verify")
+        state.counters.decisions += 1
+        if state.counters.decisions > state.budgets.max_decisions:
+            return self._escalate(
+                state, tools, f"Decision budget of {state.budgets.max_decisions} exhausted."
+            )
         action = await self._ask(state, tools, "next_action", self.brain.next_action)
         state.memory.update(action.remember)
         tools.log.emit("decision", **action.model_dump(exclude={"remember"}), remember=action.remember)
+        # Stuck = the same decision again with nothing new observed in between (a retry after a failure
+        # is not stuck: the failure is a new observation).
+        fingerprint = f"{len(state.observations)}:" + action.model_dump_json(
+            include={"kind", "step_id", "call", "then", "reason"}
+        )
+        state.counters.repeats = state.counters.repeats + 1 if fingerprint == state.last_decision else 1
+        state.last_decision = fingerprint
+        if state.counters.repeats >= state.budgets.max_repeats:
+            return self._escalate(
+                state,
+                tools,
+                f"Stuck: made the same decision {state.counters.repeats} times in a row ({action.kind}).",
+            )
         step = (
             state.plan.step(action.step_id) if action.step_id else state.plan.step(state.current_step or "")
         )
@@ -193,9 +214,16 @@ class Operator:
             case "tool":
                 return await self._execute_tool(state, tools, action)
             case "step_done":
-                if step:
-                    step.status, step.outcome = "done", action.reason
-                    tools.log.emit("step.done", step=step.id, outcome=action.reason)
+                if step is None or step.status not in ("pending", "running"):
+                    current = state.plan.open_steps[0]
+                    state.hints.append(
+                        f"Step {action.step_id!r} is {'already ' + step.status if step else 'not in the plan'}. "
+                        f"The current step is {current.id!r}: {current.goal}. Act on it."
+                    )
+                    tools.log.emit("decision.ignored", reason=state.hints[-1])
+                    return None
+                step.status, step.outcome = "done", action.reason
+                tools.log.emit("step.done", step=step.id, outcome=action.reason)
                 state.current_step = state.plan.open_steps[0].id if state.plan.open_steps else None
                 state.hints.clear()
                 return None
@@ -215,33 +243,53 @@ class Operator:
 
     async def _execute_tool(self, state: RunState, tools: ToolContext, action: NextAction) -> None:
         assert state.plan is not None and action.call is not None
-        call = action.call
         if action.step_id and state.plan.step(action.step_id):
             state.current_step = action.step_id
         step = state.plan.step(state.current_step or "")
         if step and step.status == "pending":
             step.status = "running"
 
-        if state.must_reobserve and declares_change(call):
-            refusal = ToolResult.failure(
-                "policy",
-                "Refused by the runtime: the previous change has an unknown outcome. Re-open the affected record and "
-                "check whether it took effect before declaring any new change.",
-            )
-            self._observe(state, tools, call, refusal, phase="execute")
-            return self._enter(state, tools, "adapt")
+        batch = self._batch(state, tools, [action.call, *action.then])
+        for index, call in enumerate(batch):
+            if state.must_reobserve and declares_change(call):
+                refusal = ToolResult.failure(
+                    "policy",
+                    "Refused by the runtime: the previous change has an unknown outcome. Re-open the affected "
+                    "record and check whether it took effect before declaring any new change.",
+                )
+                self._observe(state, tools, call, refusal, phase="execute")
+                return self._enter(state, tools, "adapt")
 
-        state.counters.tool_calls += 1
-        if state.counters.tool_calls > state.budgets.max_tool_calls:
-            return self._escalate(
-                state, tools, f"Tool-call budget of {state.budgets.max_tool_calls} exhausted."
+            state.counters.tool_calls += 1
+            if state.counters.tool_calls > state.budgets.max_tool_calls:
+                return self._escalate(
+                    state, tools, f"Tool-call budget of {state.budgets.max_tool_calls} exhausted."
+                )
+            result = await self._call(state, tools, call)
+            if result.ok and is_read_only(call) and call.tool != "check_policy":
+                state.must_reobserve = False
+            last = index == len(batch) - 1
+            self._observe(
+                state, tools, call, result, phase="execute", expectation=action.expectation if last else ""
             )
-        result = await self._call(state, tools, call)
-        if result.ok and is_read_only(call) and call.tool != "check_policy":
-            state.must_reobserve = False
-        self._observe(state, tools, call, result, phase="execute", expectation=action.expectation)
+            if not result.ok:
+                break
         self._enter(state, tools, "observe")
         return None
+
+    def _batch(self, state: RunState, tools: ToolContext, calls: list[ToolCall]) -> list[ToolCall]:
+        """Keep field edits followed by at most one other call; anything after that would use stale refs."""
+        for index, call in enumerate(calls):
+            if call.tool not in FIELD_TOOLS:
+                kept, dropped = calls[: index + 1], calls[index + 1 :]
+                if dropped:
+                    state.hints.append(
+                        f"Only the first {len(kept)} of your {len(calls)} calls ran: after {call.tool} the page "
+                        "may have changed, so look at the result before continuing."
+                    )
+                    tools.log.emit("batch.truncated", kept=len(kept), dropped=[c.tool for c in dropped])
+                return kept
+        return calls
 
     async def _observe_last(self, state: RunState, tools: ToolContext) -> None:
         obs = state.last_observation
@@ -352,13 +400,14 @@ class Operator:
             )
         )
 
-    def context(self, state: RunState) -> BrainContext:
+    def context(self, state: RunState, log: EventLog | None = None) -> BrainContext:
         return BrainContext(
             state=state,
             pack=self.pack,
             tools=self.registry.schemas(),
             sops=self._relevant_sops(state),
             facts=list(self.pack.facts),
+            log=log,
         )
 
     def _relevant_sops(self, state: RunState) -> list[Sop]:
@@ -376,7 +425,7 @@ class Operator:
         last: Exception | None = None
         for attempt in range(1, BRAIN_RETRIES + 2):
             try:
-                return await fn(self.context(state))
+                return await fn(self.context(state, tools.log))
             # Any brain failure (e.g. malformed model output) is retried, then fails the run cleanly.
             except Exception as exc:
                 last = exc

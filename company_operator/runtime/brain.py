@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import Field
 
+from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack
 from company_operator.company_pack.models import CompanyFact, Sop
 from company_operator.runtime.models import (
@@ -47,6 +48,9 @@ class NextAction(Model):
     kind: Literal["tool", "step_done", "step_failed", "replan", "finish"]
     step_id: str | None = None
     call: ToolCall | None = None
+    # Follow-up calls run in order after `call` while each succeeds. Only fills and selects on the
+    # current page may come before the final call, e.g. fill, fill, select, then click.
+    then: list[ToolCall] = Field(default_factory=list)
     expectation: str = ""  # what should be true after this call (checked in Observe)
     note: str = ""  # short reasoning, recorded in the audit log
     remember: dict[str, str] = Field(
@@ -62,6 +66,7 @@ class BrainContext:
     tools: list[dict[str, Any]]
     sops: list[Sop] = field(default_factory=list)
     facts: list[CompanyFact] = field(default_factory=list)
+    log: EventLog | None = None  # the run's audit log, for recording model calls
 
     def recent(self, n: int = 6) -> list[Observation]:
         return self.state.observations[-n:]

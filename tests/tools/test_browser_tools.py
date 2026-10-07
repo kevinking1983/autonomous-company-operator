@@ -247,3 +247,11 @@ async def test_view_attachment_and_screenshot(op: Driver, ctx: ToolContext) -> N
     shot = await op.call("browser_screenshot", label="Wrong order ticket")
     assert shot.evidence[0].name == "01-wrong-order-ticket.png"
     assert len(ctx.log.of_type("evidence.saved")) == 2
+
+
+def test_repeated_system_prefix_in_path_is_tolerated(ctx: ToolContext) -> None:
+    """Regression: the model sometimes writes path 'ops/customers/X' with system 'ops'."""
+    expected = ctx.browser.url_for("ops", "customers/CUST-1001")
+    assert ctx.browser.url_for("ops", "ops/customers/CUST-1001") == expected
+    assert ctx.browser.url_for("ops", "/ops/customers/CUST-1001") == expected
+    assert expected.endswith("/ops/customers/CUST-1001")

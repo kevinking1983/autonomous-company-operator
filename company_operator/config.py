@@ -29,10 +29,22 @@ class Settings(BaseSettings):
     browser_headless: bool = True
     browser_executable: str | None = None
 
-    # LLM provider; chosen at the "agent brain" step.
-    llm_provider: str = "unset"
-    llm_model: str = ""
+    # Language model. Provider: "gemini" or "openai_compatible" (Groq, OpenRouter, Ollama, ...).
+    # Models are tried in order: when one is overloaded, the next takes over.
+    llm_provider: str = "gemini"
+    llm_models: str = "gemini-3-flash-preview,gemini-3.5-flash-lite,gemini-3.1-flash-lite"
     llm_api_key: str = ""
+    llm_base_url: str = ""  # only for openai_compatible, e.g. https://api.groq.com/openai/v1
+    llm_timeout: float = 90.0
+    llm_min_interval: float = 2.0  # seconds between calls, to stay inside free-tier rate limits
+
+    @property
+    def model_list(self) -> list[str]:
+        return [m.strip() for m in self.llm_models.split(",") if m.strip()]
+
+    @property
+    def runs_dir(self) -> Path:
+        return self.data_dir / "runs"
 
     @property
     def company_pack_dir(self) -> Path:

@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 5 of 13 (runtime core). See the
+**Status:** step 6 of 13 (language-model brain). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -44,6 +44,28 @@ Playwright's Chromium; to use an existing Chromium instead, set `ACO_BROWSER_EXE
 cp .env.example .env
 make install      # Python deps, Chromium for Playwright, dashboard deps
 ```
+
+## Language model
+
+The operator's thinking phases (understand, plan, next action, summary) use a
+language model through a provider-neutral interface:
+
+| Provider | Setting | Notes |
+|---|---|---|
+| Google Gemini | `ACO_LLM_PROVIDER=gemini` | Free key at [aistudio.google.com](https://aistudio.google.com) |
+| OpenAI-compatible | `ACO_LLM_PROVIDER=openai_compatible` + `ACO_LLM_BASE_URL` | Groq, OpenRouter, Ollama, OpenAI, vLLM… |
+
+`ACO_LLM_MODELS` is an ordered list:
+
+- If a model is overloaded, it is retried with backoff, and then the next
+  model takes over.
+- If a model reports that it is out of quota, it is skipped for the time the
+  provider asks for.
+- Every model call is recorded in the run's audit log, with model, tokens and
+  latency.
+
+Free tiers have small daily request limits, so one form (several fields, then
+submit) is completed in a single model turn.
 
 ## Run
 

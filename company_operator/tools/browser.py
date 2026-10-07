@@ -171,6 +171,11 @@ class BrowserSession:
         if path.startswith(("http://", "https://")):
             return path
         if system:
+            # Tolerate the system prefix being repeated in the path ("ops/customers/..." for system "ops").
+            prefix = self.pack.systems[system].base_path.strip("/") + "/"
+            path = path.lstrip("/")
+            if path.startswith(prefix):
+                path = path[len(prefix) :]
             base = self.pack.systems[system].url(self.base_url)
             return base.rstrip("/") + "/" + path.lstrip("/") if path not in ("", "/") else base
         return self.base_url + "/" + path.lstrip("/")

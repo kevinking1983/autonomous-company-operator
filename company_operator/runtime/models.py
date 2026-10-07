@@ -135,6 +135,8 @@ class Verification(Model):
 
 
 class Budgets(Model):
+    max_decisions: int = 120  # every brain decision counts, including ones that call no tool
+    max_repeats: int = 4  # the same decision this many times in a row means the brain is stuck
     max_tool_calls: int = 80
     max_attempts_per_step: int = 4
     max_replans: int = 3
@@ -143,6 +145,8 @@ class Budgets(Model):
 
 
 class Counters(Model):
+    decisions: int = 0
+    repeats: int = 0  # consecutive identical decisions
     tool_calls: int = 0
     replans: int = 0
     verify_rounds: int = 0
@@ -159,6 +163,7 @@ class RunState(Model):
     observations: list[Observation] = []
     memory: dict[str, str] = {}  # facts discovered while working, e.g. payment_id
     hints: list[str] = []  # runtime guidance for the next decision (from Adapt)
+    last_decision: str = ""  # fingerprint of the previous decision, for the stuck detector
     must_reobserve: bool = False  # set after an uncertain write: only reads allowed until state is re-read
     pending_human: str | None = None
     resume_phase: Phase | None = None
