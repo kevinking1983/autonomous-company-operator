@@ -31,6 +31,7 @@ dev = [
 company-operator = "company_operator.api.app:main"
 quickbite-sandbox = "sandbox.quickbite.app:main"
 operator-run = "company_operator.cli:main"
+operator-worker = "company_operator.queue.cli:main"
 
 [build-system]
 requires = ["hatchling"]

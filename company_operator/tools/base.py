@@ -20,6 +20,7 @@ from company_operator.company_pack import CompanyPack
 from company_operator.policy.engine import PolicyEngine
 
 if TYPE_CHECKING:
+    from company_operator.queue.tasks import TaskQueue
     from company_operator.tools.browser import BrowserSession
     from company_operator.tools.human import HumanChannel
 
@@ -62,6 +63,9 @@ class ToolContext:
     run_dir: Path
     browser: BrowserSession
     human: HumanChannel
+    # Set when the run is executed by a queue worker: lets the operator delegate sub-tasks.
+    queue: TaskQueue | None = None
+    task_id: str | None = None
 
     @property
     def evidence_dir(self) -> Path:

@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 8 of 13 (human-in-the-loop and memory). See the
+**Status:** step 9 of 13 (task queue, background workers and supervisor requests). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -94,6 +94,41 @@ outcome:
   against those pages.
 - Integrity checks in code run alongside, e.g. that the same money movement
   never happened twice.
+
+### Working through a queue
+
+The operator is meant to work like an employee with a queue, not one command
+at a time.
+
+```bash
+make sandbox                                                   # terminal 1
+make worker                                                    # terminal 2 (= operator-worker; --workers 2 for parallel tasks)
+uv run operator-run --enqueue --ticket TKT-1001                # terminal 3: add work
+uv run operator-run --enqueue --text "Clear all open late-delivery tickets" --priority high
+```
+
+How the queue behaves:
+
+- Tasks are durable and run in priority order, and a ticket is never queued
+  twice while it is still active.
+- A worker holds a lease on its task. If the worker dies, another reclaims
+  the task and continues it **from its checkpoint**.
+- Paused runs go back to the queue as `waiting` and are re-checked
+  automatically. Approvals, answers, customer replies and finished sub-tasks
+  are picked up without anyone typing `--resume`.
+- A supervisor request covering many tickets is split by the operator itself
+  (`delegate_tasks`) into one sub-task per ticket. Each sub-task is resolved
+  and verified on its own, and the parent resumes with their outcomes. If a
+  sub-task escalates, its ticket is handed to a person: the runtime refuses
+  any change the parent tries to make to it, and the parent reports it as
+  needing a person instead.
+
+The API (`make api`) also serves:
+
+- `POST /tasks`, `GET /tasks`, `GET /tasks/{id}` and `POST /tasks/{id}/cancel`
+- `GET /runs/{id}`, `/report`, `/events` and `/evidence/{file}`
+- `GET /runs/{id}/stream`: a live Server-Sent Events stream of the run
+- `GET /stats`
 
 ### When the operator needs a person
 

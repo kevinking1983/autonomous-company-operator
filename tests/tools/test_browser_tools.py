@@ -255,3 +255,29 @@ def test_repeated_system_prefix_in_path_is_tolerated(ctx: ToolContext) -> None:
     assert ctx.browser.url_for("ops", "ops/customers/CUST-1001") == expected
     assert ctx.browser.url_for("ops", "/ops/customers/CUST-1001") == expected
     assert expected.endswith("/ops/customers/CUST-1001")
+
+
+async def test_changes_in_another_form_are_reported_as_lost(op: Driver, sandbox: LiveSandbox) -> None:
+    """Regression: the operator set the category in the update form, then submitted the note form."""
+    await op.open("support", "tickets/TKT-1001")
+    await op.select('combobox "Category"', "missing_item")
+    await op.fill('textarea "Internal note', "Checked the packing log.")
+    result = await op.click('button "Add internal note"', "support.add_internal_note", ticket_id="TKT-1001")
+    assert result.ok
+    assert "Your changes to Category (in form 'Update ticket') were NOT submitted" in result.output
+    assert (
+        "Internal note" not in result.output.split("NOT submitted")[0]
+    )  # the note's own field was submitted
+    ticket = next(t for t in sandbox.rows("support_tickets") if t["id"] == "TKT-1001")
+    assert ticket["category"] is None  # the browser really did discard it, as the warning says
+
+
+async def test_submitting_the_right_form_gives_no_warning(op: Driver, sandbox: LiveSandbox) -> None:
+    await op.open("support", "tickets/TKT-1001")
+    await op.select('combobox "Category"', "missing_item")
+    result = await op.click('button "Update ticket"', "support.update_ticket", ticket_id="TKT-1001")
+    assert result.ok and "NOT submitted" not in result.output
+    assert (
+        next(t for t in sandbox.rows("support_tickets") if t["id"] == "TKT-1001")["category"]
+        == "missing_item"
+    )

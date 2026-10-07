@@ -97,6 +97,9 @@ class BrowserSession:
         self._page: Page | None = None
         self._last_doc: _Document | None = None
         self._verdicts: list[GuardVerdict] = []
+        # Fields the operator changed on the current page and which form they belong to. A submit of a
+        # different form reloads the page and silently discards them, so the operator is told.
+        self._edits: dict[str, tuple[str, str]] = {}  # ref -> (field label, form name)
 
     # ── lifecycle ──
 
@@ -185,6 +188,7 @@ class BrowserSession:
         return self.base_url + "/" + path.lstrip("/")
 
     async def open(self, url: str) -> PageState:
+        self._edits.clear()
         if urlsplit(url).netloc != self.origin:
             return PageState(
                 url, "", None, "", error="policy", note="Only the company's own systems can be opened."
@@ -195,14 +199,41 @@ class BrowserSession:
         locator = self.page.locator(f'[data-aco-ref="{ref}"]')
         if await locator.count() == 0:
             return await self._stale_ref(ref)
-        return await self._perform(lambda: locator.click(timeout=5_000), is_read=False)
+        _, clicked_form = await self._field_info(ref)
+        at_risk = {r: info for r, info in self._edits.items() if info[1] != clicked_form}
+        url_before = self.page.url
+        state = await self._perform(lambda: locator.click(timeout=5_000), is_read=False)
+        if self.page.url != url_before or self._last_doc is not None:  # the page reloaded or moved on
+            if at_risk:
+                lost = "; ".join(f"{label} (in form {form!r})" for label, form in at_risk.values())
+                warning = (
+                    f"Your changes to {lost} were NOT submitted: this click submitted a different form, so "
+                    "they are lost. To save them, set them again and use that form's own button."
+                )
+                state.note = f"{state.note} {warning}".strip()
+                self.log.emit("browser.unsaved_changes_lost", fields=[label for label, _ in at_risk.values()])
+            self._edits.clear()
+        return state
 
     async def fill(self, ref: str, value: str) -> PageState:
         locator = self.page.locator(f'[data-aco-ref="{ref}"]')
         if await locator.count() == 0:
             return await self._stale_ref(ref)
         await locator.fill(value, timeout=5_000)
+        self._edits[ref] = await self._field_info(ref)
         return await self.state()
+
+    async def _field_info(self, ref: str) -> tuple[str, str]:
+        """(field label, name of the form it belongs to) for an element on the current page."""
+        info: list[str] = await self.page.locator(f'[data-aco-ref="{ref}"]').evaluate(
+            """el => {
+                const label = (el.labels && el.labels.length ? el.labels[0].innerText : el.getAttribute('aria-label') || el.name || '').trim();
+                const form = el.form || el.closest('form');
+                const name = form ? (form.getAttribute('aria-label') || 'form #' + ([...document.forms].indexOf(form) + 1)) : '';
+                return [label, name];
+            }"""
+        )
+        return info[0], info[1]
 
     async def select(self, ref: str, option: str) -> PageState:
         locator = self.page.locator(f'[data-aco-ref="{ref}"]')
@@ -212,6 +243,7 @@ class BrowserSession:
             await locator.select_option(label=option, timeout=3_000)
         except PlaywrightError:
             await locator.select_option(value=option, timeout=3_000)
+        self._edits[ref] = await self._field_info(ref)
         return await self.state()
 
     async def screenshot(self, path: Path) -> Path:

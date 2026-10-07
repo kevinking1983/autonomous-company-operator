@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +50,25 @@ CREATE TABLE IF NOT EXISTS learned_facts (
     source      TEXT NOT NULL,      -- e.g. "approval H-1003 rejected by priya.supervisor"
     created_at  TEXT NOT NULL,
     active      INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id            TEXT PRIMARY KEY,
+    seq           INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    ticket_id     TEXT,
+    source        TEXT NOT NULL,      -- ticket / supervisor / api
+    requested_by  TEXT NOT NULL,
+    priority      INTEGER NOT NULL,   -- higher runs first
+    status        TEXT NOT NULL,      -- queued / running / waiting / completed / escalated / failed / cancelled
+    parent_id     TEXT,
+    run_id        TEXT,
+    worker        TEXT,
+    lease_until   TEXT,               -- a running task whose lease expired is reclaimed (worker crashed)
+    next_check_at TEXT,               -- when a waiting task should be looked at again
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    error         TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS episodes (
     run_id      TEXT PRIMARY KEY,
@@ -114,7 +135,9 @@ class OperatorDB:
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self._conn = sqlite3.connect(str(path) if path else ":memory:", check_same_thread=False, timeout=10)
+        self._conn = sqlite3.connect(
+            str(path) if path else ":memory:", check_same_thread=False, timeout=10, isolation_level=None
+        )
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         with self._lock:
@@ -122,6 +145,18 @@ class OperatorDB:
                 self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.executescript(SCHEMA)
             self._conn.commit()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """An immediate (write-locked) transaction: atomic even across processes sharing the file."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def _exec(self, sql: str, *params: Any) -> list[sqlite3.Row]:
         with self._lock:
@@ -132,11 +167,11 @@ class OperatorDB:
     # ── requests to people ──
 
     def add_request(self, **fields: Any) -> StoredRequest:
-        with self._lock:
-            row = self._conn.execute("SELECT MAX(seq) FROM human_requests").fetchone()
+        with self.transaction() as conn:
+            row = conn.execute("SELECT MAX(seq) FROM human_requests").fetchone()
             seq = (row[0] or FIRST_REQUEST_SEQ - 1) + 1
             request = StoredRequest(id=f"H-{seq}", status="pending", created_at=now(), **fields)
-            self._conn.execute(
+            conn.execute(
                 """INSERT INTO human_requests (id, seq, run_id, kind, audience, question, action, facts, rules,
                      reasons, context, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
@@ -155,7 +190,6 @@ class OperatorDB:
                     request.created_at,
                 ),
             )
-            self._conn.commit()
         return request
 
     def get_request(self, request_id: str) -> StoredRequest:

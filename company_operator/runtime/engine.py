@@ -26,6 +26,7 @@ from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack
 from company_operator.company_pack.models import CompanyFact, Sop
 from company_operator.memory.store import Episode, OperatorDB
+from company_operator.queue.tasks import TaskQueue
 from company_operator.runtime.brain import Brain, BrainContext, NextAction, Verifier
 from company_operator.runtime.models import Observation, Phase, Plan, PlanStep, RunState, ToolCall
 from company_operator.runtime.store import RunStore
@@ -54,6 +55,15 @@ def is_read_only(call: ToolCall) -> bool:
 
 def declares_change(call: ToolCall) -> bool:
     return call.tool == "browser_click" and bool(call.arguments.get("action"))
+
+
+def touches(call: ToolCall, records: list[str]) -> str | None:
+    """The off-limits record a declared change would act on, if any."""
+    if not records or not declares_change(call):
+        return None
+    facts = call.arguments.get("facts") or {}
+    values = {str(v).strip().upper() for v in facts.values()} if isinstance(facts, dict) else set()
+    return next((r for r in records if r.upper() in values), None)
 
 
 class Operator:
@@ -94,12 +104,14 @@ class Operator:
             request = tools.human.get(state.pending_human)
             if request.status == "pending" and request.kind == "external_reply":
                 request = await self._check_for_reply(request, tools)
+            if request.status == "pending" and request.kind == "subtasks":
+                request = self._check_subtasks(request, tools)
             if request.status == "pending":
                 return state
             if request.status == "approved":
                 tools.human.grant_for(request)  # the grant lives in this process's policy engine
-            if request.kind == "external_reply":
-                answer = f"A reply arrived on {request.context.get('record')}:\n{request.response}"
+            if request.kind in ("external_reply", "subtasks"):
+                answer = f"Update on {request.context.get('record') or 'your sub-tasks'}:\n{request.response}"
             else:
                 answer = {
                     "approved": f"APPROVED by {request.responder}. You may now perform exactly the approved action.",
@@ -118,7 +130,19 @@ class Operator:
             # An approval lets the plan continue. A rejection or an answer changes the situation, so the
             # task contract itself is revisited: what "done" means may no longer be what it was.
             revisit = request.status == "rejected" or request.kind in ("clarification", "external_reply")
-            if revisit and state.contract:
+            escalated = self._escalated_subtask_records(request)
+            if escalated:
+                # A sub-task asked for a person. The parent must not take that work back: it reports it.
+                state.hands_off = sorted({*state.hands_off, *escalated})
+                tools.log.emit("subtasks.escalated", records=escalated)
+                state.hints = [
+                    f"Sub-tasks for {', '.join(escalated)} were escalated to a person. Do not act on "
+                    f"{'them' if len(escalated) > 1 else 'it'}. Revise the task contract: the other records are "
+                    "handled as requested, and these are left on hold for a person (say so in your summary)."
+                ]
+                state.budgets.max_understand_reads = state.counters.understand_reads + 4
+                self._enter(state, tools, "understand")
+            elif revisit and state.contract:
                 state.hints = [
                     "A person's response changed the situation (see the latest result). Revise the task contract: "
                     "success criteria must describe what should be true NOW, in light of that response."
@@ -289,6 +313,15 @@ class Operator:
 
         batch = self._batch(state, tools, [action.call, *action.then])
         for index, call in enumerate(batch):
+            touched = touches(call, state.hands_off)
+            if touched:
+                refusal = ToolResult.failure(
+                    "policy",
+                    f"Refused by the runtime: {touched} was escalated to a person by its sub-task; leave it to them.",
+                )
+                self._observe(state, tools, call, refusal, phase="execute")
+                return self._enter(state, tools, "adapt")
+
             if state.must_reobserve and declares_change(call):
                 refusal = ToolResult.failure(
                     "policy",
@@ -444,6 +477,36 @@ class Operator:
         if reply is None:
             return request
         return tools.human.answer(request.id, reply, responder=request.audience)
+
+    def _check_subtasks(self, request: HumanRequest, tools: ToolContext) -> HumanRequest:
+        """Have all delegated sub-tasks finished? If so, report each one's outcome."""
+        if self.db is None:
+            return request
+        queue = TaskQueue(self.db)
+        tasks = [queue.get(t) for t in request.context.get("tasks", [])]
+        if not all(t.finished for t in tasks):
+            return request
+        lines = []
+        for t in tasks:
+            outcome = ""
+            if t.run_id:
+                child = self.store.load(t.run_id)
+                outcome = (child.summary or child.outcome_reason)[:400]
+            flag = (
+                " NEEDS A PERSON: escalated by its sub-task; do not act on it"
+                if t.status != "completed"
+                else ""
+            )
+            lines.append(f"- {t.id} {t.ticket_id or ''} [{t.status}]{flag} {outcome}")
+        return tools.human.answer(request.id, "\n".join(lines), responder="queue")
+
+    def _escalated_subtask_records(self, request: HumanRequest) -> list[str]:
+        """Tickets whose sub-task did not complete: they were handed to a person and are off limits."""
+        if self.db is None or request.kind != "subtasks":
+            return []
+        queue = TaskQueue(self.db)
+        tasks = [queue.get(t) for t in request.context.get("tasks", [])]
+        return [t.ticket_id for t in tasks if t.ticket_id and t.status != "completed"]
 
     def _remember_episode(self, state: RunState) -> None:
         if self.db is None:

@@ -26,6 +26,7 @@ from company_operator.llm import build_llm
 from company_operator.memory.store import OperatorDB
 from company_operator.planning.llm_brain import LLMBrain, notify_current_run
 from company_operator.policy import PolicyEngine
+from company_operator.queue import PRIORITY, TaskQueue
 from company_operator.runtime import Operator, RunState, RunStore, TaskRequest
 from company_operator.runtime.environment import tool_environment
 from company_operator.tools import default_registry
@@ -35,8 +36,8 @@ from company_operator.verify import IndependentVerifier, write_report
 WATCH_INTERVAL = 10.0
 
 
-def progress(event: Event) -> None:
-    """One line per interesting event."""
+def progress_line(event: Event) -> str | None:
+    """A one-line description of an interesting event, or None."""
     d = event.data
     line = {
         "phase": lambda: f"── {d['from']} → {d['to']}",
@@ -58,7 +59,11 @@ def progress(event: Event) -> None:
         "llm.cooldown": lambda: f"   ⏳ {d['model']} rate-limited, cooling down {d['seconds']:.0f}s",
         "run.escalated": lambda: f"⚠️  escalated: {d['reason']}",
     }.get(event.type)
-    if line and (text := line()):
+    return (line() or None) if line else None
+
+
+def progress(event: Event) -> None:
+    if text := progress_line(event):
         print(text, flush=True)
 
 
@@ -186,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     task.add_argument("--inbox", action="store_true", help="List requests waiting for a person")
     task.add_argument("--approve", metavar="REQUEST_ID", help="Approve a request, e.g. H-1001")
     task.add_argument("--reject", metavar="REQUEST_ID", help="Reject a request, e.g. H-1001")
+    parser.add_argument(
+        "--enqueue", action="store_true", help="Queue the task for a worker instead of running it now"
+    )
+    parser.add_argument(
+        "--priority", choices=list(PRIORITY), default="normal", help="Queue priority (with --enqueue)"
+    )
     parser.add_argument("--note", default="", help="Reason for an approval or rejection")
     parser.add_argument(
         "--remember", action="store_true", help="Keep the note as a company fact for future runs"
@@ -202,6 +213,19 @@ def main(argv: list[str] | None = None) -> int:
         return inbox(settings)
     if args.approve or args.reject:
         return decide(settings, args.approve or args.reject, bool(args.approve), args.note, args.remember)
+    if args.enqueue:
+        if not (args.ticket or args.text):
+            print("--enqueue needs --ticket or --text", file=sys.stderr)
+            return 2
+        queued = TaskQueue(OperatorDB(settings.db_path)).enqueue(
+            args.text or f"Resolve support ticket {args.ticket}.",
+            ticket_id=args.ticket,
+            source="ticket" if args.ticket else "supervisor",
+            requested_by="cli",
+            priority=PRIORITY[args.priority],
+        )
+        print(f"{queued.id} {queued.status}: {queued.text}")
+        return 0
     if args.headed:
         settings.browser_headless = False
     if not settings.llm_api_key and settings.llm_provider != "openai_compatible":

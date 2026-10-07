@@ -167,6 +167,8 @@ class RunState(Model):
     must_reobserve: bool = False  # set after an uncertain write: only reads allowed until state is re-read
     pending_human: str | None = None
     handover: str = ""  # set while handing the work over before escalating: the reason for stopping
+    # Records a sub-task escalated to a person: this run must not change them (a person owns them now).
+    hands_off: list[str] = []
     resume_phase: Phase | None = None
     verification: Verification | None = None
     summary: str = ""

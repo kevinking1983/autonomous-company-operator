@@ -76,6 +76,9 @@ class HumanChannel:
             context=context or {},
         )
 
+    def wait_for_tasks(self, about: str, task_ids: list[str]) -> HumanRequest:
+        return self._new(kind="subtasks", audience="operator", question=about, context={"tasks": task_ids})
+
     def wait_for_reply(self, about: str, context: dict[str, Any]) -> HumanRequest:
         return self._new(kind="external_reply", audience="customer", question=about, context=context)
 

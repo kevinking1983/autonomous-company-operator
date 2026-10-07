@@ -47,6 +47,11 @@ OPERATING_PRINCIPLES = """\
 - Before replying to a customer, make sure the thing you promise has actually happened (re-open the record).
 - When only the customer can tell you something, reply on their ticket with ONE clear question (status
   pending_customer), then call wait_for_reply with the ticket id. You resume when they answer.
+- A request that covers several tickets (e.g. "clear today's late-delivery tickets"): find exactly which
+  tickets it means (read the queue), then call delegate_tasks with one task per ticket ("Resolve support
+  ticket TKT-..."). Each is resolved and verified on its own; you resume with their outcomes. Your success
+  criteria should name those tickets and what must be true of each. A sub-task that escalated has handed its
+  ticket to a person: never act on that ticket yourself; report it as needing a person.
 """
 
 

@@ -18,6 +18,8 @@ from company_operator.company_pack.models import Fact
 from company_operator.tools.base import Tool, ToolContext, ToolInput, ToolRegistry, ToolResult
 from company_operator.tools.browser import PageState
 
+MAX_SUBTASKS = 25
+
 
 def page_result(state: PageState, **data: Any) -> ToolResult:
     data = {"url": state.url, "status": state.status, "alerts": state.alerts, **data}
@@ -306,6 +308,49 @@ class WaitForReply(Tool[WaitInput]):
         )
 
 
+class SubTask(ToolInput):
+    text: str = Field(
+        description="The request for this piece of work, e.g. 'Resolve support ticket TKT-1015.'"
+    )
+    ticket_id: str | None = Field(None, description="The ticket it concerns, if any.")
+
+
+class DelegateInput(ToolInput):
+    tasks: list[SubTask] = Field(min_length=1, max_length=MAX_SUBTASKS)
+    about: str = Field(description="What these sub-tasks achieve together.")
+
+
+class DelegateTasks(Tool[DelegateInput]):
+    name = "delegate_tasks"
+    description = (
+        "Split a large request into independent sub-tasks (e.g. one per ticket) that are worked on separately, "
+        "each with its own verification. Your run pauses until they are all finished, then you see their outcomes."
+    )
+    input_model = DelegateInput
+
+    async def run(self, ctx: ToolContext, args: DelegateInput) -> ToolResult:
+        if ctx.queue is None:
+            return ToolResult.failure(
+                "invalid_input", "Sub-tasks need the task queue: run this request through a worker."
+            )
+        children = [
+            ctx.queue.enqueue(
+                t.text,
+                ticket_id=t.ticket_id,
+                source="supervisor",
+                requested_by=f"task {ctx.task_id}",
+                parent_id=ctx.task_id,
+            )
+            for t in args.tasks
+        ]
+        request = ctx.human.wait_for_tasks(args.about, [c.id for c in children])
+        listing = ", ".join(f"{c.id} ({c.ticket_id or c.text[:40]})" for c in children)
+        return ToolResult.success(
+            f"Delegated {len(children)} sub-tasks: {listing}. Waiting for them to finish ({request.id}).",
+            data={"request_id": request.id, "pending": True, "tasks": [c.id for c in children]},
+        )
+
+
 def record_url(ctx: ToolContext, record_id: str) -> str | None:
     for record in ctx.pack.records.values():
         if record.find(record_id) == [record_id.strip().upper()]:
@@ -328,5 +373,6 @@ def default_registry() -> ToolRegistry:
             RequestApproval(),
             AskHuman(),
             WaitForReply(),
+            DelegateTasks(),
         ]
     )
