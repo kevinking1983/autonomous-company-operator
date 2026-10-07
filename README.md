@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 4 of 13 (tools and policy engine). See the
+**Status:** step 5 of 13 (runtime core). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
