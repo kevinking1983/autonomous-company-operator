@@ -255,7 +255,7 @@ autonomous-company-operator/
 │   ├── BLUEPRINT.md          # this file
 │   ├── ARCHITECTURE.md       # deeper dive
 │   └── DECISIONS.md          # ADR-style decision log
-├── operator/                 # the AI employee (Python)
+├── company_operator/         # the AI employee (Python)
 │   ├── runtime/              # state machine, phases, task contract, checkpoints
 │   ├── planning/             # planner, replanner, failure classifier
 │   ├── verify/               # independent verifier + evidence
