@@ -69,6 +69,9 @@ class BrowserSnapshot(Tool[SnapshotInput]):
         return page_result(await ctx.browser.state())
 
 
+NOT_SENT = "no {action} request was sent by this click"
+
+
 class ClickInput(ToolInput):
     ref: str = Field(description="Element ref from the latest snapshot, e.g. 'e12'.")
     action: str | None = Field(
@@ -108,13 +111,27 @@ class BrowserClick(Tool[ClickInput]):
                         + ". Use request_approval with the same action and facts, then click again once approved.",
                         data={"rules": decision.rules},
                     )
-        uses_before = grant.uses_left if grant else None
+        sent_before = ctx.policy.sent.get(args.action, 0) if args.action else 0
         state = await ctx.browser.click(args.ref)
-        if grant and grant.uses_left == uses_before and grant.uses_left is not None and not state.error:
-            # Nothing matching the declared action was submitted: don't leave a live grant lying around.
-            ctx.policy.revoke(grant.id)
+        if grant and args.action and ctx.policy.sent.get(args.action, 0) == sent_before and not state.error:
+            # Nothing matching the declared action was submitted, e.g. the click opened a confirmation page,
+            # or the browser refused to submit a form with a required field left empty.
+            invalid = await ctx.browser.invalid_fields()
+            if grant.approved:
+                # A person's approval is kept: it still allows only this exact request, once.
+                outcome = "the approval still stands; declare it again on the click that submits it."
+            else:
+                ctx.policy.revoke(grant.id)  # don't leave a live grant lying around
+                outcome = "the authorisation was withdrawn."
+            if invalid:
+                state.error = "invalid_input"
+                outcome = (
+                    "the form was not submitted because these fields are not valid: "
+                    + "; ".join(invalid)
+                    + f". Fix them, then click again. Also: {outcome}"
+                )
             state.note = (state.note + " " if state.note else "") + (
-                f"Note: no {args.action} request was sent by this click; the authorisation was withdrawn."
+                f"Note: {NOT_SENT.format(action=args.action)}; {outcome}"
             )
         return page_result(state, action=args.action, grant=grant.id if grant else None)
 
@@ -243,14 +260,16 @@ class RequestApproval(Tool[ApprovalInput]):
                 "policy", "Cannot be approved, it is denied: " + "; ".join(decision.reasons)
             )
         request = ctx.human.request_approval(
-            decision,
-            args.justification,
-            context={"page": ctx.browser.current_url},
+            decision, args.justification, context={"page": ctx.browser.current_url}
         )
+        evidence = []
+        if ctx.browser.current_url:
+            evidence.append(await ctx.browser.screenshot(ctx.evidence_dir / f"approval-{request.id}.png"))
         return ToolResult.success(
             f"Approval requested ({request.id}) for {args.action}: {', '.join(decision.rules)}. "
             "Wait for the decision before acting.",
             data={"request_id": request.id, "pending": True},
+            evidence=evidence,
         )
 
 

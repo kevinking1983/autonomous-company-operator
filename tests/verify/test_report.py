@@ -15,6 +15,7 @@ from company_operator.runtime import (
 )
 from company_operator.runtime.models import Observation
 from company_operator.verify import write_report
+from company_operator.verify.report import record_diff
 
 
 def test_report_tells_the_whole_story(tmp_path: Path) -> None:
@@ -59,3 +60,40 @@ def test_report_tells_the_whole_story(tmp_path: Path) -> None:
     assert "Model calls: 1 (gemini-test)" in md and "adaptations: reobserve_before_retry" in md
     assert "[verify1-01-order-QB-48213.png](evidence/verify1-01-order-QB-48213.png)" in md
     assert report["stats"]["input_tokens"] == 1000
+
+
+def _page(seq: int, url: str, body: str, action: str | None = None) -> Observation:
+    call = (
+        ToolCall(tool="browser_click", arguments={"action": action})
+        if action
+        else ToolCall(tool="browser_open")
+    )
+    return Observation(
+        seq=seq, phase="execute", step_id="s", call=call, ok=True,
+        output=f"URL: {url}\nTitle: t\nQuickBite Support Desk\n  link \"Tickets\" [e1]\n# {body}",
+    )  # fmt: skip
+
+
+def test_changes_show_the_record_before_and_after() -> None:
+    observations = [
+        _page(1, "http://x/support/tickets/TKT-1", 'TKT-1\n  Status: open [e5]\n  textbox "Reply" [e6]'),
+        _page(
+            2,
+            "http://x/support/tickets/TKT-1?msg=Updated",
+            "TKT-1\n  Status: resolved [e5]",
+            "support.update_ticket",
+        ),
+        _page(3, "http://x/payments/refunds/RF-70012", "Refund RF-70012\n  Amount: ₹60", "payments.refund"),
+        _page(4, "http://x/ops/incidents", "Incidents\n  INC-1", "ops.raise_incident"),
+    ]
+    # Same page seen earlier: only what changed (refs, navigation and form controls are not changes).
+    assert record_diff(observations, 1) == [
+        {"op": "-", "text": "  Status: open"},
+        {"op": "+", "text": "  Status: resolved"},
+    ]
+    # A record that did not exist before is all new.
+    assert record_diff(observations, 2) == [
+        {"op": "+", "text": "# Refund RF-70012"},
+        {"op": "+", "text": "  Amount: ₹60"},
+    ]
+    assert record_diff(observations, 3) is None  # a list page with nothing earlier to compare

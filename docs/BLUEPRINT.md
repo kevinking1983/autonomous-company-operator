@@ -222,27 +222,35 @@ fact**, so future runs learn from it.
 | Backend API | **FastAPI** with Server-Sent Events | Async and typed, and the timeline updates live. |
 | Persistence | **SQLite** | Zero-ops. Postgres is the documented production path. |
 | Sandbox apps | FastAPI with server-rendered HTML (three apps) plus fault injection | Realistic "legacy internal tools" that the agent must operate through the UI. |
-| **Dashboard** | **React + TypeScript + Vite + Tailwind + shadcn/ui**, with Recharts for analytics | Polished and feature-rich; dark and light themes. |
+| **Dashboard** | **React + TypeScript + Vite + Tailwind**, with a small set of our own components and lucide icons | Polished and feature-rich; dark and light themes. *Changed in step 10:* shadcn/ui and Recharts were dropped. The few components and the one chart the dashboard needs are small enough to own, which keeps the bundle and the dependency list short. |
 | Evals | pytest plus a scenario harness: ticket types × fault profiles → scorecard | Reliability becomes measurable. |
 
 ### 4.1 Dashboard features (polished, feature-rich)
 
-- **Command centre:** submit a ticket or supervisor request. Includes KPIs:
-  tickets resolved, auto-resolution rate, average time, refund spend, approval
-  rate.
+- **Command centre:** submit a ticket or supervisor request. KPIs: tasks
+  completed, independently verified, auto-resolved (no person stepped in),
+  money given, waiting for people, average time to finish (and how much of it
+  was waiting for people), approval rate, rules learned. Task outcomes chart,
+  what is running now and a live activity feed.
 - **Live run view:** an animated phase tracker showing the current loop phase,
-  the plan with each step's status, the agent's reasoning, tool calls, and a
-  live browser screenshot stream.
-- **Ticket queue:** filter by type and status, and launch runs in bulk.
+  the plan with each step's status, the agent's reasoning and tool calls as they
+  happen, and a live view of the operator's browser (a frame after every
+  browser action).
+- **Ticket queue:** filter by status and by type (the ticket's category once
+  understood, or supervisor requests), and queue several tickets at once.
 - **Approval inbox:** shows what the agent wants to do, why, the policy rule
-  that triggered the approval, and the evidence. Approve, reject with a reason,
-  or edit.
-- **Evidence viewer:** each verification criterion marked pass or fail, a
-  screenshot gallery, before-and-after values, and the full audit timeline.
-- **Run history and replay:** step through any past run decision by decision.
-- **Company Pack browser:** view the SOPs, policies and learned company facts.
-- **Reliability lab:** toggle fault profiles and run the eval suite, with a
-  scorecard chart.
+  that triggered the approval, and the evidence: the pages it actually read and
+  a screenshot taken when it asked. Approve, approve a **lower** amount (never a
+  higher one), or reject with a reason, optionally teaching it as a rule.
+- **Evidence viewer:** each verification criterion marked pass or fail with the
+  verifier's evidence, a screenshot gallery, each change's record **before and
+  after**, and the full audit timeline.
+- **Run history and replay:** step through any past run decision by decision:
+  what it decided and why, what it expected, what it saw, and what it did next.
+- **Company Pack browser:** view the SOPs, policies, permissions and systems;
+  learned company facts are on the Memory page.
+- **Reliability lab** *(step 11)*: toggle fault profiles and run the eval suite,
+  with a scorecard chart.
 
 ---
 

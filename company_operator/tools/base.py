@@ -8,6 +8,7 @@ reacts differently to each kind of failure.
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,9 @@ if TYPE_CHECKING:
 ErrorKind = Literal[
     "transient", "uncertain", "rejected", "not_found", "policy", "needs_approval", "invalid_input"
 ]
+
+
+LIVE_FRAME = "live.jpg"  # the latest browser frame, for watching a run as it happens
 
 
 @dataclass
@@ -133,6 +137,10 @@ class ToolRegistry:
                     result = ToolResult.failure(
                         "transient", f"{name} failed unexpectedly: {type(exc).__name__}: {exc}"
                     )
+        if name.startswith("browser_"):
+            # The live view is a convenience for people watching; it never fails a run.
+            with contextlib.suppress(Exception):
+                await ctx.browser.live_frame(ctx.run_dir / LIVE_FRAME)
         ctx.log.emit(
             "tool.result",
             tool=name,

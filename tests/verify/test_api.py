@@ -73,3 +73,22 @@ def test_unknown_request(client: TestClient) -> None:
     assert (
         client.post("/requests/H-9999/decision", json={"approved": True, "approver": "x"}).status_code == 404
     )
+
+
+def test_approve_a_lower_amount(client: TestClient) -> None:
+    request_id = open_approval(client)
+    too_much = client.post(
+        f"/requests/{request_id}/decision", json={"approved": True, "approver": "p", "amount": 900}
+    )
+    assert too_much.status_code == 409
+    assert (
+        client.post(
+            f"/requests/{request_id}/decision", json={"approved": True, "approver": "p", "amount": 0}
+        ).status_code
+        == 422
+    )
+    done = client.post(
+        f"/requests/{request_id}/decision", json={"approved": True, "approver": "p", "amount": 450}
+    ).json()
+    assert done["status"] == "approved" and done["facts"]["amount"] == 450
+    assert done["context"]["requested_amount"] == 605.85

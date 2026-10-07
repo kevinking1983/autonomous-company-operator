@@ -70,3 +70,16 @@ def test_live_stream_sends_events_then_ends(client: TestClient, monkeypatch: pyt
     with client.stream("GET", f"/runs/{state.run_id}/stream") as response:
         body = "".join(response.iter_text())
     assert "event: run.completed" in body and body.rstrip().endswith("event: end\ndata: {}")
+
+
+def test_bulk_queue(client: TestClient) -> None:
+    single = client.post("/tasks", json={"ticket_id": "TKT-1001"}).json()
+    tasks = client.post(
+        "/tasks/bulk",
+        json={"ticket_ids": ["tkt-1002", "TKT-1001", " TKT-1002 ", "TKT-1003"], "priority": "high"},
+    ).json()
+    assert [t["ticket_id"] for t in tasks] == ["TKT-1002", "TKT-1001", "TKT-1003"]
+    assert tasks[1]["id"] == single["id"]  # already queued: not queued twice
+    assert {t["priority"] for t in (tasks[0], tasks[2])} == {2}
+    assert client.post("/tasks/bulk", json={"ticket_ids": ["TKT-1", "drop table"]}).status_code == 422
+    assert client.post("/tasks/bulk", json={"ticket_ids": []}).status_code == 422

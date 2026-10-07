@@ -166,13 +166,23 @@ def inbox(settings: Settings) -> int:
     return 0
 
 
-def decide(settings: Settings, request_id: str, approved: bool, note: str, remember: bool) -> int:
+def decide(
+    settings: Settings,
+    request_id: str,
+    approved: bool,
+    note: str,
+    remember: bool,
+    amount: float | None = None,
+) -> int:
     log = EventLog()
     pack = load_pack(settings.company_pack_dir)
     channel = HumanChannel(PolicyEngine(pack, log), log, OperatorDB(settings.db_path))
-    request = channel.decide(request_id, approved, approver=settings.supervisor, note=note, remember=remember)
+    request = channel.decide(
+        request_id, approved, approver=settings.supervisor, note=note, remember=remember, amount=amount
+    )
     print(
         f"{request.id} {request.status} by {request.responder}"
+        + (f" for {request.facts['amount']} (asked: {request.context['requested_amount']})" if amount else "")
         + (" (remembered as a company fact)" if remember and note else "")
     )
     if request.run_id:
@@ -198,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         "--priority", choices=list(PRIORITY), default="normal", help="Queue priority (with --enqueue)"
     )
     parser.add_argument("--note", default="", help="Reason for an approval or rejection")
+    parser.add_argument("--amount", type=float, help="With --approve: approve a lower amount than requested")
     parser.add_argument(
         "--remember", action="store_true", help="Keep the note as a company fact for future runs"
     )
@@ -212,7 +223,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.inbox:
         return inbox(settings)
     if args.approve or args.reject:
-        return decide(settings, args.approve or args.reject, bool(args.approve), args.note, args.remember)
+        return decide(
+            settings, args.approve or args.reject, bool(args.approve), args.note, args.remember, args.amount
+        )
     if args.enqueue:
         if not (args.ticket or args.text):
             print("--enqueue needs --ticket or --text", file=sys.stderr)

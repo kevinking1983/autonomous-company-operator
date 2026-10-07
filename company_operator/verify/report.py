@@ -7,12 +7,14 @@ report.json for the dashboard and report.md for people.
 
 from __future__ import annotations
 
+import difflib
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from company_operator.runtime.models import RunState
+from company_operator.runtime.models import Observation, RunState
 
 STATUS = {
     "completed": "✅ Completed and verified",
@@ -40,6 +42,51 @@ def outcome_text(output: str) -> str:
     return message or urlsplit(url).path
 
 
+_REF = re.compile(r"\s*\[e\d+[^\]]*\]")
+# Lines that describe the page rather than the record: navigation, banners and form controls whose
+# values the operator typed (they show up "before" and are cleared "after", which is not a change).
+_NOISE = re.compile(
+    r"^\s*(URL: |Title: |HTTP status|Note: |\[status\]|(textbox|textarea|combobox|checkbox|button|link) )"
+)
+MAX_DIFF_LINES = 30
+
+
+def _page_lines(output: str) -> list[str]:
+    lines = output.splitlines()
+    # The record starts at the page's heading; above it is the app's own header and navigation.
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("# ")), 0)
+    return [_REF.sub("", ln).rstrip() for ln in lines[start:] if ln.strip() and not _NOISE.match(ln)]
+
+
+def _path(output: str) -> str | None:
+    first = output.split("\n", 1)[0]
+    return urlsplit(first[5:]).path if first.startswith("URL: ") else None
+
+
+def record_diff(observations: list[Observation], index: int) -> list[dict[str, str]] | None:
+    """How the record's page read before a change and after it: only the lines that differ.
+
+    "After" is the page the submission landed on; "before" is the last time the operator saw that same
+    page earlier in the run. When the submission landed on a record that did not exist before (a new
+    refund, say), all of it is new. None when there is nothing sensible to compare.
+    """
+    after = observations[index]
+    path = _path(after.output)
+    if not path:
+        return None
+    before = next((o for o in reversed(observations[:index]) if _path(o.output) == path), None)
+    if before is None:
+        if not re.search(r"/[A-Z]+-\d+$", path):  # not a record page, e.g. a list
+            return None
+        return [{"op": "+", "text": line} for line in _page_lines(after.output)][:MAX_DIFF_LINES]
+    diff = [
+        {"op": line[0], "text": line[2:]}
+        for line in difflib.ndiff(_page_lines(before.output), _page_lines(after.output))
+        if line[:1] in "+-" and line[2:].strip()
+    ]
+    return diff[:MAX_DIFF_LINES]
+
+
 def build_report(state: RunState, events: list[dict[str, Any]], run_dir: Path) -> dict[str, Any]:
     llm_calls = [e["data"] for e in events if e["type"] == "llm.call"]
     changes = [
@@ -51,11 +98,12 @@ def build_report(state: RunState, events: list[dict[str, Any]], run_dir: Path) -
             "ok": o.ok,
             "error": o.error,
             "result": outcome_text(o.output),
+            "diff": record_diff(state.observations, i) if o.ok else None,
         }
-        for o in state.observations
+        for i, o in enumerate(state.observations)
         if o.call.tool == "browser_click"
         and o.call.arguments.get("action")
-        and "authorisation was withdrawn" not in o.output  # declared, but nothing was submitted
+        and "request was sent by this click" not in o.output  # declared, but nothing was submitted
     ]
     human = [e["data"] for e in events if e["type"] in ("human.request", "human.decided", "human.answered")]
     evidence_dir = run_dir / "evidence"

@@ -225,6 +225,15 @@ class OperatorDB:
         )
         return self.get_request(request_id)
 
+    def amend_request(self, request_id: str, facts: dict[str, Any], context: dict[str, Any]) -> None:
+        """Change the facts a request covers, e.g. when a supervisor approves a lower amount."""
+        self._exec(
+            "UPDATE human_requests SET facts = ?, context = ? WHERE id = ?",
+            json.dumps(facts),
+            json.dumps(context),
+            request_id,
+        )
+
     @staticmethod
     def _request(row: sqlite3.Row) -> StoredRequest:
         data = dict(row)

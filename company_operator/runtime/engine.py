@@ -19,6 +19,7 @@ The runtime, not the model, owns:
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -110,7 +111,15 @@ class Operator:
                 return state
             if request.status == "approved":
                 tools.human.grant_for(request)  # the grant lives in this process's policy engine
-            if request.kind in ("external_reply", "subtasks"):
+            reduced = request.status == "approved" and "requested_amount" in request.context
+            if reduced:
+                answer = (
+                    f"APPROVED by {request.responder} for a LOWER amount: {request.facts['amount']} instead of "
+                    f"{request.context['requested_amount']}. {request.response or ''} Perform the action only with "
+                    f"exactly these facts: {json.dumps(request.facts)}. Anything that mentions the amount (the "
+                    "task contract, the reply to the customer, notes) must use the approved amount."
+                )
+            elif request.kind in ("external_reply", "subtasks"):
                 answer = f"Update on {request.context.get('record') or 'your sub-tasks'}:\n{request.response}"
             else:
                 answer = {
@@ -129,7 +138,9 @@ class Operator:
             state.pending_human = None
             # An approval lets the plan continue. A rejection or an answer changes the situation, so the
             # task contract itself is revisited: what "done" means may no longer be what it was.
-            revisit = request.status == "rejected" or request.kind in ("clarification", "external_reply")
+            revisit = (
+                reduced or request.status == "rejected" or request.kind in ("clarification", "external_reply")
+            )
             escalated = self._escalated_subtask_records(request)
             if escalated:
                 # A sub-task asked for a person. The parent must not take that work back: it reports it.
@@ -514,7 +525,7 @@ class Operator:
         changes = [
             {"action": o.call.arguments.get("action"), "facts": o.call.arguments.get("facts", {}), "ok": o.ok}
             for o in state.observations
-            if declares_change(o.call) and o.ok and "authorisation was withdrawn" not in o.output
+            if declares_change(o.call) and o.ok and "request was sent by this click" not in o.output
         ]
         self.db.add_episode(
             Episode(

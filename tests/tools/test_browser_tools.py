@@ -30,6 +30,15 @@ async def test_open_signs_in_and_snapshots_the_page(op: Driver, ctx: ToolContext
     assert [e.data["system"] for e in ctx.log.of_type("browser.login")] == ["support"]
 
 
+async def test_browser_actions_update_the_live_frame(op: Driver, ctx: ToolContext) -> None:
+    frame = ctx.run_dir / "live.jpg"
+    await op.open("support", "tickets")
+    first = frame.read_bytes()
+    assert first[:2] == b"\xff\xd8"  # a JPEG
+    await op.open("support", "tickets/TKT-1003")
+    assert frame.read_bytes() != first
+
+
 async def test_tables_are_rendered_with_row_refs(op: Driver) -> None:
     result = await op.open("support", "tickets")
     assert 'table "Tickets"' in result.output
@@ -152,6 +161,76 @@ async def test_large_refund_waits_for_approval(op: Driver, sandbox: LiveSandbox,
     done = await op.click('button "Confirm refund"', "payments.refund", **facts)
     assert done.ok, done.output
     assert [r["amount"] for r in sandbox.rows("pay_refunds") if r["order_id"] == "QB-48241"] == [60585]
+
+
+async def test_approval_survives_a_click_that_only_reviews(
+    op: Driver, sandbox: LiveSandbox, ctx: ToolContext
+) -> None:
+    # Regression: declaring the approved refund on "Review refund" (which only renders a confirmation
+    # page) used to withdraw the approval, so the real confirm click needed a second approval.
+    pay = payment_id(sandbox, "QB-48241")
+    facts = {"payment_id": pay, "amount": 605.85, "reason": "wrong_order", "full_order_refund": True}
+    asked = await op.call("request_approval", action="payments.refund", facts=facts, justification="Bag swap")
+    ctx.human.decide(asked.data["request_id"], approved=True, approver="priya.supervisor")
+
+    await op.open("payments", f"transactions/{pay}")
+    await op.fill('textbox "Refund amount', "605.85")
+    await op.select('combobox "Reason"', "wrong_order")
+    review = await op.click('button "Review refund"', "payments.refund", **facts)
+    assert review.ok and "approval still stands" in review.output
+    done = await op.click('button "Confirm refund"', "payments.refund", **facts)
+    assert done.ok, done.output
+    assert [r["amount"] for r in sandbox.rows("pay_refunds") if r["order_id"] == "QB-48241"] == [60585]
+    assert ctx.policy.find_grant("payments.refund", facts) is None  # used once, then gone
+
+
+async def test_declared_click_that_only_navigates_is_not_a_change(op: Driver, ctx: ToolContext) -> None:
+    # Regression: write grants are reusable, so a declared click that sent nothing (here, a link)
+    # used to count as a change in reports and episodes.
+    await op.open("support", "tickets/TKT-1001")
+    nav = await op.click('link "Active tickets"', "support.update_ticket", ticket_id="TKT-1001")
+    assert nav.ok and "no support.update_ticket request was sent by this click" in nav.output
+    assert ctx.policy.find_grant("support.update_ticket", {"ticket_id": "TKT-1001"}) is None
+
+
+async def test_form_the_browser_will_not_submit_names_the_invalid_fields(
+    op: Driver, sandbox: LiveSandbox
+) -> None:
+    # Regression: a required field left empty stops the browser submitting at all. The operator was only
+    # told "nothing was sent" and clicked again ~35 times; now it is a failure that says which field.
+    await op.open("ops", "orders/QB-48241")
+    result = await op.click('button "Raise incident"', "ops.raise_incident", restaurant_id="REST-02")
+    assert result.error == "invalid_input"
+    assert '"Category"' in result.output and "not submitted" in result.output
+    assert not [i for i in sandbox.rows("ops_incidents") if i["order_id"] == "QB-48241"]
+
+
+async def test_submission_counts_whichever_grant_the_guard_used(
+    op: Driver, sandbox: LiveSandbox, ctx: ToolContext
+) -> None:
+    # Regression: a supervisor approved ₹400 (within policy) and the operator declared slightly different
+    # facts, so policy issued a second grant. The guard used the approval; the click was then wrongly
+    # reported as "nothing sent" and the refund left out of the report.
+    pay = payment_id(sandbox, "QB-48241")
+    asked = await op.call(
+        "request_approval",
+        action="payments.refund",
+        facts={"payment_id": pay, "amount": 605.85, "reason": "wrong_order", "full_order_refund": True},
+        justification="Bag swap",
+    )
+    ctx.human.decide(asked.data["request_id"], approved=True, approver="priya.supervisor", amount=400)
+    await refund_form(op, sandbox, "QB-48241", "400", "wrong_order")
+    done = await op.click(
+        'button "Confirm refund"',
+        "payments.refund",
+        payment_id=pay,
+        amount=400,
+        reason="wrong_order",
+        customer_claims_30d=0,
+    )
+    assert done.ok, done.output
+    assert "request was sent by this click" not in done.output
+    assert [r["amount"] for r in sandbox.rows("pay_refunds") if r["order_id"] == "QB-48241"] == [40000]
 
 
 async def test_forbidden_action_is_denied(op: Driver, sandbox: LiveSandbox) -> None:

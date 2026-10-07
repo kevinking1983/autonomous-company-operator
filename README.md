@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 9 of 13 (task queue, background workers and supervisor requests). See the
+**Status:** step 10 of 13 (the dashboard). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -165,12 +165,56 @@ When a run has to stop, it first **hands over**. It puts the ticket on hold
 with an internal note saying why it stopped, what it checked and what it
 changed, so a person can pick it up.
 
-Other commands:
+## Dashboard
+
+```bash
+make dashboard-build   # once, or after changing dashboard/
+make sandbox           # terminal 1: QuickBite on http://127.0.0.1:8100
+make worker            # terminal 2: background workers
+make api               # terminal 3: dashboard on http://127.0.0.1:8000, API under /api
+```
+
+`make api` serves the built dashboard at `/` and the API under `/api`
+(interactive docs at `/api/docs`). For dashboard development with hot reload,
+run `make dashboard` (http://localhost:5173), which proxies `/api` to the API.
+
+| Screen | What it is for |
+|---|---|
+| **Command centre** | Headline numbers: tasks completed, independently verified, auto-resolved (no person stepped in), money given, waiting for people, average time to finish, approval rate, rules learned. A form to queue a ticket or a supervisor request, task outcomes, what is running now and a live activity feed. |
+| **Tasks** | The queue, filtered by status and by type, with sub-tasks nested under their parent. Queue several tickets at once; cancel. |
+| **Runs** | Every run, including ones started from the CLI. |
+| **Run view** | The Understand → Plan → Execute → Observe → Adapt → Verify → Complete tracker. A **live view of the operator's browser**. A timeline streamed from the audit log, and a **replay** that steps through the run decision by decision: what it decided and why, what it expected and what it saw. The task contract with the verifier's evidence for each criterion; the plan; every change made in company systems with the record **before and after**; screenshots. |
+| **Approval inbox** | What the operator wants to do and which policy rule needs a person; its justification **next to the pages it actually read** and a screenshot taken when it asked, so a supervisor can check the claim rather than trust it. Approve, approve a **lower amount** (never a higher one), or reject with a reason and optionally teach it as a company rule. |
+| **Memory** | Rules learned from supervisors (forget or add), the Company Pack's own facts, and past episodes. |
+| **Company Pack** | The procedures, compensation and approval policy, permissions and systems the operator works from, read-only. |
+
+Light and dark themes; works down to phone width.
+
+| Run view | Approval inbox |
+|---|---|
+| ![Run view](docs/screenshots/dashboard-run.png) | ![Approval inbox](docs/screenshots/dashboard-inbox.png) |
+
+| Replay, decision by decision | Live browser while it works |
+|---|---|
+| ![Replay](docs/screenshots/dashboard-replay.png) | ![Live browser](docs/screenshots/dashboard-live.png) |
+
+| Command centre | Command centre (dark) |
+|---|---|
+| ![Command centre](docs/screenshots/dashboard-overview.png) | ![Command centre, dark theme](docs/screenshots/dashboard-overview-dark.png) |
+
+Dashboard endpoints, in addition to those above: `GET /runs`, `GET /runs/{id}/pages`
+(what the operator saw), `GET /runs/{id}/live.jpg` (its browser right now),
+`GET /requests/{id}/context`, `POST /tasks/bulk`, `GET /overview`, `GET /activity`
+and `GET /company-pack` (sign-in credentials are left out).
+`POST /requests/{id}/decision` takes an optional `amount` to approve less than
+was asked for; from the command line: `operator-run --approve H-1001 --amount 300`.
+
+## Other commands
 
 ```bash
 make sandbox      # QuickBite's back-office apps on http://127.0.0.1:8100
-make api          # operator API on http://127.0.0.1:8000
-make dashboard    # dashboard on http://localhost:5173
+make api          # operator API and dashboard on http://127.0.0.1:8000
+make dashboard    # dashboard dev server on http://localhost:5173
 ```
 
 The sandbox's systems, logins, scenario catalogue and fault injection are

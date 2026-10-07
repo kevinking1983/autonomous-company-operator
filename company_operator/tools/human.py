@@ -97,14 +97,35 @@ class HumanChannel:
         return request
 
     def decide(
-        self, request_id: str, approved: bool, approver: str, note: str = "", remember: bool = False
+        self,
+        request_id: str,
+        approved: bool,
+        approver: str,
+        note: str = "",
+        remember: bool = False,
+        amount: float | None = None,
     ) -> HumanRequest:
-        """Record a supervisor's decision. With remember=True the note becomes a learned company fact."""
+        """Record a supervisor's decision. With remember=True the note becomes a learned company fact.
+
+        `amount` approves a lower amount than was asked for. A supervisor may reduce what the operator
+        does, never increase it: anything else would authorise something nobody has checked.
+        """
         request = self.get(request_id)
         if request.kind != "approval":
             raise ValueError(f"{request_id} is not an approval request")
         if request.status != "pending":
             raise ValueError(f"{request_id} was already {request.status}")
+        if amount is not None and approved:
+            requested = request.facts.get("amount")
+            if not isinstance(requested, int | float) or isinstance(requested, bool):
+                raise ValueError(f"{request_id} has no amount to change")
+            if not 0 < amount <= requested:
+                raise ValueError(f"An approved amount must be above 0 and at most the requested {requested}")
+            if amount < requested:
+                facts = request.facts | {"amount": round(amount, 2)}
+                if facts.get("full_order_refund") is True:
+                    facts["full_order_refund"] = False  # part of the order is no longer the whole of it
+                self.store.amend_request(request_id, facts, request.context | {"requested_amount": requested})
         request = self.store.resolve_request(
             request_id, "approved" if approved else "rejected", note, approver
         )
@@ -114,7 +135,14 @@ class HumanChannel:
             verb = "approved" if approved else "rejected"
             self.store.add_fact(note, source=f"approval {request_id} ({request.action}) {verb} by {approver}")
         self.log.emit(
-            "human.decided", id=request_id, approved=approved, approver=approver, note=note, remember=remember
+            "human.decided",
+            id=request_id,
+            approved=approved,
+            approver=approver,
+            note=note,
+            remember=remember,
+            facts=request.facts,
+            requested_amount=request.context.get("requested_amount"),
         )
         return request
 

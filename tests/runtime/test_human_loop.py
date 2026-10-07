@@ -246,3 +246,62 @@ async def test_rejection_leads_to_a_revised_contract(
     assert finished.contract is not None
     assert finished.contract.success_criteria[0].text == "Ticket is on hold for the fraud team"
     assert not [r for r in sandbox.rows("pay_refunds") if r["order_id"] == "QB-48275"]
+
+
+def test_supervisor_can_approve_a_lower_amount_only(db: OperatorDB, pack: CompanyPack) -> None:
+    channel = HumanChannel(PolicyEngine(pack, EventLog()), EventLog(), db, run_id="r1")
+    facts = {"payment_id": "PAY-1", "amount": 605.85, "reason": "wrong_order", "full_order_refund": True}
+    request = channel.request_approval(channel.policy.evaluate("payments.refund", facts), "Bag swap")
+    with pytest.raises(ValueError, match="at most the requested"):
+        channel.decide(request.id, approved=True, approver="priya.supervisor", amount=700)
+    decided = channel.decide(request.id, approved=True, approver="priya.supervisor", amount=300)
+    assert decided.facts["amount"] == 300 and decided.facts["full_order_refund"] is False
+    assert decided.context["requested_amount"] == 605.85
+
+    # The grant covers the approved amount and nothing more.
+    channel.grant_for(decided)
+    confirm = "/payments/transactions/PAY-1/refund/confirm"
+    assert not channel.policy.guard(
+        "POST", confirm, {"amount": "60585", "reason_code": "wrong_order"}
+    ).allowed
+    assert channel.policy.guard("POST", confirm, {"amount": "30000", "reason_code": "wrong_order"}).allowed
+
+    question = channel.ask("Which order?")
+    with pytest.raises(ValueError, match="not an approval"):
+        channel.decide(question.id, approved=True, approver="x", amount=10)
+
+
+async def test_lower_amount_tells_the_operator_and_revises_the_contract(
+    ctx: ToolContext,
+    registry: ToolRegistry,
+    pack: CompanyPack,
+    store: RunStore,
+    sandbox: LiveSandbox,
+    db: OperatorDB,
+) -> None:
+    facts = {"payment_id": payment_id(sandbox, "QB-48241"), "amount": 605.85, "reason": "wrong_order"}
+    state = store.create(TaskRequest(text="Resolve TKT-1003", ticket_id="TKT-1003"))
+    use_db(ctx, db, state.run_id)
+    brain = ScriptedBrain(
+        task=contract("Refund of ₹605.85 exists"),
+        plans=[plan("refund"), plan("refund")],
+        moves=[
+            tool(
+                "request_approval", "refund", action="payments.refund", facts=facts, justification="Bag swap"
+            ),
+            done("refund", "refund of ₹400 issued"),
+        ],
+    )
+    op = Operator(brain, ScriptedVerifier(True), registry, pack, store, db=db, transient_backoff=0)
+    paused = await op.run(state, ctx)
+    ctx.human.decide(paused.pending_human or "", approved=True, approver="priya.supervisor", amount=400)
+    brain.task = contract("Refund of ₹400 exists")
+    finished = await op.resume(paused, ctx)
+
+    response = next(o for o in finished.observations if o.call.tool == "human_response")
+    assert "LOWER amount: 400 instead of 605.85" in response.output
+    assert ctx.log.of_type("contract.revised")
+    assert (
+        finished.contract is not None
+        and finished.contract.success_criteria[0].text == "Refund of ₹400 exists"
+    )

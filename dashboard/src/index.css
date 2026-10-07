@@ -1,1 +1,136 @@
 @import "tailwindcss";
+
+/* Design tokens. Light and dark are each chosen deliberately (not an automatic flip).
+   Status colours are reserved for state and always appear with an icon and a label. */
+:root {
+  color-scheme: light;
+  --page: #f6f6f3;
+  --surface: #ffffff;
+  --surface-2: #f6f6f3;
+  --surface-3: #eeede8;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --line: #e4e3dc;
+  --line-strong: #c3c2b7;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --accent-soft: #e6f0fc;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --good-soft: #e5f5e5;
+  --warning: #fab219;
+  --warning-ink: #7a5200;
+  --warning-soft: #fef4dd;
+  --serious: #ec835a;
+  --serious-ink: #9a3d17;
+  --serious-soft: #fdeee7;
+  --critical: #d03b3b;
+  --critical-ink: #a32727;
+  --critical-soft: #fbe9e9;
+  --violet: #4a3aa7;
+  --violet-soft: #eeecfa;
+  --shadow: 0 1px 2px rgb(11 11 11 / 0.04), 0 1px 1px rgb(11 11 11 / 0.03);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #222220;
+    --surface-3: #2c2c2a;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #898781;
+    --line: #2c2c2a;
+    --line-strong: #383835;
+    --accent: #3987e5;
+    --accent-ink: #86b6ef;
+    --accent-soft: #15283f;
+    --good-ink: #4fd04f;
+    --good-soft: #13280f;
+    --warning-ink: #fac75a;
+    --warning-soft: #2e2510;
+    --serious-ink: #f2a483;
+    --serious-soft: #321e15;
+    --critical-ink: #ec8a8a;
+    --critical-soft: #331616;
+    --violet: #9085e9;
+    --violet-soft: #221d40;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #222220;
+  --surface-3: #2c2c2a;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #898781;
+  --line: #2c2c2a;
+  --line-strong: #383835;
+  --accent: #3987e5;
+  --accent-ink: #86b6ef;
+  --accent-soft: #15283f;
+  --good-ink: #4fd04f;
+  --good-soft: #13280f;
+  --warning-ink: #fac75a;
+  --warning-soft: #2e2510;
+  --serious-ink: #f2a483;
+  --serious-soft: #321e15;
+  --critical-ink: #ec8a8a;
+  --critical-soft: #331616;
+  --violet: #9085e9;
+  --violet-soft: #221d40;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-good-soft: var(--good-soft);
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--warning-ink);
+  --color-warning-soft: var(--warning-soft);
+  --color-serious: var(--serious);
+  --color-serious-ink: var(--serious-ink);
+  --color-serious-soft: var(--serious-soft);
+  --color-critical: var(--critical);
+  --color-critical-ink: var(--critical-ink);
+  --color-critical-soft: var(--critical-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --shadow-card: var(--shadow);
+}
+
+html, body, #root { min-height: 100%; }
+body { background: var(--page); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+.tabular { font-variant-numeric: tabular-nums; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
+.live-dot { animation: pulse-ring 1.6s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+.prose-sop h1 { font-size: 1.05rem; font-weight: 600; margin: 0 0 .5rem; }
+.prose-sop h2 { font-size: .95rem; font-weight: 600; margin: 1rem 0 .4rem; }
+.prose-sop p, .prose-sop li { color: var(--ink-2); line-height: 1.6; font-size: .875rem; }
+.prose-sop ol { list-style: decimal; padding-left: 1.25rem; }
+.prose-sop ul { list-style: disc; padding-left: 1.25rem; }
+.prose-sop li { margin: .2rem 0; }
+.prose-sop code { font-family: var(--font-mono); font-size: .8em; background: var(--surface-3); padding: 0 .3em; border-radius: 4px; }
+.prose-sop strong { color: var(--ink); }
+.prose-sop blockquote { border-left: 3px solid var(--line-strong); padding-left: .75rem; color: var(--ink-2); }

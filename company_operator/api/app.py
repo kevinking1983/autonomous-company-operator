@@ -10,12 +10,14 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from company_operator import __version__
@@ -26,6 +28,7 @@ from company_operator.memory.store import OperatorDB
 from company_operator.policy import PolicyEngine
 from company_operator.queue import PRIORITY, TaskQueue
 from company_operator.runtime import RunStore
+from company_operator.tools.base import LIVE_FRAME
 from company_operator.tools.human import HumanChannel
 from company_operator.verify.report import build_report, load_events
 
@@ -84,6 +87,9 @@ class DecisionBody(BaseModel):
     remember: bool = Field(
         False, description="Teach the operator: keep the note as a company fact for future runs."
     )
+    amount: float | None = Field(
+        None, gt=0, description="Approve a lower amount than requested (never a higher one)."
+    )
 
 
 @app.post("/requests/{request_id}/decision")
@@ -94,7 +100,9 @@ def decide(
     pack: Pack,
 ) -> dict[str, Any]:
     try:
-        request = channel(db, pack).decide(request_id, body.approved, body.approver, body.note, body.remember)
+        request = channel(db, pack).decide(
+            request_id, body.approved, body.approver, body.note, body.remember, body.amount
+        )
     except KeyError:
         raise HTTPException(404, f"No request {request_id}") from None
     except ValueError as exc:
@@ -187,6 +195,8 @@ def run_brief(store: RunStore, run_id: str | None) -> dict[str, Any] | None:
         "reason": state.outcome_reason,
         "pending_human": state.pending_human,
         "verified": state.verification.passed if state.verification else None,
+        "category": state.contract.category if state.contract else None,
+        "created_at": state.created_at,
         "updated_at": state.updated_at,
     }
 
@@ -212,6 +222,34 @@ def create_task(body: TaskBody, db: Db) -> dict[str, Any]:
         priority=PRIORITY[body.priority],
     )
     return vars(task)
+
+
+class BulkBody(BaseModel):
+    ticket_ids: list[str] = Field(min_length=1, max_length=50)
+    priority: str = Field("normal", pattern="^(low|normal|high|urgent)$")
+    requested_by: str = "dashboard"
+
+
+@app.post("/tasks/bulk")
+def create_tasks(body: BulkBody, db: Db) -> list[dict[str, Any]]:
+    """Queue several tickets at once. A ticket already queued or running is not queued twice."""
+    ids = list(dict.fromkeys(t.strip().upper() for t in body.ticket_ids if t.strip()))
+    bad = [t for t in ids if not re.fullmatch(r"TKT-\d+", t)]
+    if bad or not ids:
+        raise HTTPException(422, f"Not ticket ids: {', '.join(bad) or 'none given'}")
+    queue = queue_of(db)
+    return [
+        vars(
+            queue.enqueue(
+                f"Resolve support ticket {t}.",
+                ticket_id=t,
+                source="ticket",
+                requested_by=body.requested_by,
+                priority=PRIORITY[body.priority],
+            )
+        )
+        for t in ids
+    ]
 
 
 @app.get("/tasks")
@@ -313,11 +351,184 @@ def evidence(run_id: str, name: str, store: Store) -> FileResponse:
     return FileResponse(path)
 
 
+# ───────────────────────── views for the dashboard ─────────────────────────
+
+
+@app.get("/runs/{run_id}/live.jpg")
+def live_frame(run_id: str, store: Store) -> FileResponse:
+    """What the operator's browser shows right now (updated after every browser action)."""
+    path = _run_dir(store, run_id) / LIVE_FRAME
+    if not path.exists():
+        raise HTTPException(404, "No browser frame yet")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/runs")
+def list_runs(store: Store, limit: int = 50) -> list[dict[str, Any]]:
+    """Every run, newest first, including ones started from the CLI rather than the queue."""
+    briefs = [run_brief(store, run_id) for run_id in store.list()[:limit]]
+    return [b | {"request": store.load(b["run_id"]).request.model_dump()} for b in briefs if b]
+
+
+@app.get("/runs/{run_id}/pages")
+def run_pages(run_id: str, store: Store) -> list[dict[str, Any]]:
+    """The pages the operator looked at during the run, latest version of each: what it actually saw."""
+    _run_dir(store, run_id)
+    pages: dict[str, dict[str, Any]] = {}
+    for obs in store.load(run_id).observations:
+        if not obs.output.startswith("URL: "):
+            continue
+        lines = obs.output.splitlines()
+        url = lines[0][5:].split("?")[0]
+        title = next((ln[7:] for ln in lines if ln.startswith("Title: ")), url)
+        pages.pop(url, None)
+        pages[url] = {"seq": obs.seq, "url": url, "title": title, "text": obs.output}
+    return list(reversed(pages.values()))
+
+
+@app.get("/requests/{request_id}/context")
+def request_context(request_id: str, db: Db, store: Store) -> dict[str, Any]:
+    """Everything a supervisor needs to decide: the request, its run, and the evidence the operator saw."""
+    try:
+        request = db.get_request(request_id)
+    except KeyError:
+        raise HTTPException(404, f"No request {request_id}") from None
+    run = run_brief(store, request.run_id)
+    evidence = []
+    if run:
+        folder = store.run_dir(request.run_id or "") / "evidence"
+        evidence = sorted(p.name for p in folder.iterdir()) if folder.exists() else []
+    return {
+        "request": vars(request),
+        "run": run,
+        "evidence": evidence,
+        "pages": run_pages(request.run_id, store) if run and request.run_id else [],
+    }
+
+
+MONEY_ACTIONS = ("payments.refund", "payments.issue_coupon")
+
+
+@app.get("/overview")
+def overview(db: Db, store: Store) -> dict[str, Any]:
+    """Headline numbers for the command centre."""
+    episodes = db.episodes(limit=10_000)
+    outcomes: dict[str, int] = {}
+    money = {"payments.refund": 0.0, "payments.issue_coupon": 0.0}
+    for e in episodes:
+        outcomes[e.outcome] = outcomes.get(e.outcome, 0) + 1
+        for change in e.changes:
+            if change.get("action") in MONEY_ACTIONS:
+                money[str(change["action"])] += float((change.get("facts") or {}).get("amount", 0) or 0)
+    finished = len(episodes)
+    verified = sum(1 for e in episodes if e.verified)
+    requests = db.list_requests(status=None)
+    approvals = [r for r in requests if r.kind == "approval" and r.status != "pending"]
+    approved = sum(1 for r in approvals if r.status == "approved")
+    with_people = {r.run_id for r in requests if r.kind in ("approval", "clarification")}
+    auto = sum(1 for e in episodes if e.outcome == "completed" and e.run_id not in with_people)
+    return {
+        "tasks": queue_of(db).counts(),
+        "runs_finished": finished,
+        "outcomes": outcomes,
+        "verified": verified,
+        "verified_rate": round(verified / finished, 3) if finished else None,
+        "refunded": round(money["payments.refund"], 2),
+        "coupons": round(money["payments.issue_coupon"], 2),
+        "waiting_for_people": len(db.list_requests(status="pending")),
+        "auto_resolution_rate": round(auto / finished, 3) if finished else None,
+        "approvals_decided": len(approvals),
+        "approval_rate": round(approved / len(approvals), 3) if approvals else None,
+        **run_times(store, db),
+        "learned_facts": len(db.facts()),
+    }
+
+
+def _minutes(start: str, end: str) -> float:
+    return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() / 60
+
+
+def run_times(store: RunStore, db: OperatorDB) -> dict[str, float | None]:
+    """Average time from start to finish of finished runs, and how much of it was spent waiting for people."""
+    waits: dict[str, float] = {}
+    for r in db.list_requests(status=None):
+        if r.run_id and r.decided_at and r.kind in ("approval", "clarification"):
+            waits[r.run_id] = waits.get(r.run_id, 0.0) + _minutes(r.created_at, r.decided_at)
+    totals, waiting = [], []
+    for run_id in store.list():
+        state = store.load(run_id)
+        if state.finished:
+            totals.append(_minutes(state.created_at, state.updated_at))
+            waiting.append(min(waits.get(run_id, 0.0), totals[-1]))
+    if not totals:
+        return {"avg_minutes": None, "avg_waiting_minutes": None}
+    return {
+        "avg_minutes": round(sum(totals) / len(totals), 1),
+        "avg_waiting_minutes": round(sum(waiting) / len(waiting), 1),
+    }
+
+
+ACTIVITY_TYPES = {
+    "contract.created", "contract.revised", "plan.created", "step.done", "verify.result", "run.completed",
+    "run.escalated", "run.handover", "human.request", "human.decided", "human.answered", "guard.blocked",
+    "adapt.decision", "subtasks.escalated",
+}  # fmt: skip
+
+
+@app.get("/activity")
+def activity(store: Store, limit: int = 40) -> list[dict[str, Any]]:
+    """The latest notable events across recent runs: the command centre's live feed."""
+    items: list[dict[str, Any]] = []
+    for run_id in store.list()[:15]:
+        state = store.load(run_id)
+        label = state.request.ticket_id or state.request.text[:60]
+        for event in load_events(store.run_dir(run_id))[-200:]:
+            if event["type"] in ACTIVITY_TYPES:
+                items.append(event | {"run_id": run_id, "label": label})
+    return sorted(items, key=lambda e: e["at"], reverse=True)[:limit]
+
+
+@app.get("/company-pack")
+def company_pack(pack: Pack) -> dict[str, Any]:
+    """What the operator knows about the company: read-only, for people to inspect."""
+    return {
+        "company": pack.company.model_dump(),
+        "systems": {
+            k: v.model_dump(exclude={"credentials": {"sandbox_default"}}) for k, v in pack.systems.items()
+        },
+        "actions": [a.model_dump() for a in pack.actions.values()],
+        "forbidden": [f.model_dump() for f in pack.forbidden],
+        "compensation": pack.compensation.model_dump(),
+        "approvals": pack.approvals.model_dump(),
+        "sops": [s.model_dump(exclude={"path"}) for s in pack.sops.values()],
+        "records": {k: v.model_dump() for k, v in pack.records.items()},
+        "guides": {k: v.model_dump() for k, v in pack.guides.items()},
+    }
+
+
+def create_server() -> FastAPI:
+    """The API under /api and, when it has been built, the dashboard at /."""
+    server = FastAPI(title="Autonomous Company Operator", version=__version__, docs_url="/api/docs")
+    server.mount("/api", app)
+    dist = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+    if (dist / "index.html").exists():
+        server.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+        @server.get("/{path:path}", include_in_schema=False)
+        def spa(path: str) -> FileResponse:
+            candidate = (dist / path).resolve()
+            if path and candidate.is_file() and candidate.parent == dist.resolve():
+                return FileResponse(candidate)
+            return FileResponse(dist / "index.html")  # client-side routes
+
+    return server
+
+
 def main() -> None:
     import uvicorn
 
     settings = get_settings()
-    uvicorn.run(app, host=settings.api_host, port=settings.api_port)
+    uvicorn.run(create_server(), host=settings.api_host, port=settings.api_port)
 
 
 if __name__ == "__main__":

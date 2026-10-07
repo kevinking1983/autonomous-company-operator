@@ -18,6 +18,7 @@ Responsibilities that belong to infrastructure rather than to the model:
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,6 +70,15 @@ class _Document:
     method: str
     url: str
     status: int
+
+
+# Fields failing the browser's own validation, which stops a form being submitted at all.
+INVALID_FIELDS_JS = """() => [...document.querySelectorAll('input, select, textarea')]
+  .filter((el) => !el.disabled && el.offsetParent !== null && !el.checkValidity())
+  .map((el) => {
+    const label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.name;
+    return `"${(label || 'field').trim()}": ${el.validationMessage}`;
+  })"""
 
 
 class BrowserSession:
@@ -251,6 +261,21 @@ class BrowserSession:
         await self.page.screenshot(path=str(path), full_page=True)
         self.log.emit("evidence.saved", kind="screenshot", path=str(path), url=self.page.url)
         return path
+
+    async def invalid_fields(self) -> list[str]:
+        """Visible form fields the browser considers invalid (e.g. a required field left empty), with why."""
+        if self._page is None:
+            return []
+        fields: list[str] = await self._page.evaluate(INVALID_FIELDS_JS)
+        return fields
+
+    async def live_frame(self, path: Path) -> None:
+        """Overwrite a small JPEG of what the browser shows now: the dashboard's live view of the run."""
+        if self._page is None or self._page.url in ("", "about:blank"):
+            return
+        tmp = path.with_suffix(".tmp.jpg")
+        await self._page.screenshot(path=str(tmp), type="jpeg", quality=55)
+        os.replace(tmp, path)  # atomic: a reader never sees half a frame
 
     async def fetch_bytes(self, url: str) -> tuple[int, str, bytes]:
         """GET a resource (e.g. an attachment) with the browser's cookies, signing in if needed."""

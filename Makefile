@@ -5,7 +5,7 @@ install:            ## Install Python + dashboard dependencies and the Chromium 
 	uv run playwright install chromium
 	cd dashboard && npm install
 
-api:                ## Run the operator API
+api:                ## Run the operator API and the built dashboard on http://127.0.0.1:8000
 	uv run company-operator
 
 run:                ## Resolve one ticket end to end with a fresh sandbox: make run TICKET=TKT-1001

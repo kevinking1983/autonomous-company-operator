@@ -55,6 +55,11 @@ class Grant:
     expires_at: datetime
 
     @property
+    def approved(self) -> bool:
+        """Created by a person's approval, as opposed to issued by policy."""
+        return self.source.startswith("approval:")
+
+    @property
     def live(self) -> bool:
         return (self.uses_left is None or self.uses_left > 0) and datetime.now(UTC) < self.expires_at
 
@@ -85,6 +90,10 @@ class PolicyEngine:
         self.pack = pack
         self.log = log
         self._grants: list[Grant] = []
+        # Requests let through per action. Counted per action, not per grant: when several grants could
+        # cover a request (say a person's approval and a policy grant for the same refund), the guard uses
+        # whichever matches first.
+        self.sent: dict[str, int] = {}
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
 
@@ -253,6 +262,7 @@ class PolicyEngine:
                 if mismatch is None:
                     if grant.uses_left is not None:
                         grant.uses_left -= 1
+                    self.sent[action.id] = self.sent.get(action.id, 0) + 1
                     return GuardVerdict(
                         True, action.id, f"matches grant {grant.id} ({grant.source})", grant.id
                     )
