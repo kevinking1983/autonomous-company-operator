@@ -257,7 +257,7 @@ class LLMBrain:
         self, ctx: BrainContext, purpose: str, prompt: str, tools: list[ToolSpec], *, tool_mode: str
     ) -> LLMResponse:
         request = LLMRequest(
-            system=prompts.system_prompt(ctx.pack),
+            system=prompts.system_prompt(ctx.pack, ctx.facts),
             prompt=prompt,
             images=self._images(ctx),
             tools=tools,

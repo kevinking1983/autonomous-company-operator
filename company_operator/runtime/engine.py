@@ -24,11 +24,13 @@ from typing import TypeVar
 
 from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack
-from company_operator.company_pack.models import Sop
+from company_operator.company_pack.models import CompanyFact, Sop
+from company_operator.memory.store import Episode, OperatorDB
 from company_operator.runtime.brain import Brain, BrainContext, NextAction, Verifier
-from company_operator.runtime.models import Observation, Phase, RunState, ToolCall
+from company_operator.runtime.models import Observation, Phase, Plan, PlanStep, RunState, ToolCall
 from company_operator.runtime.store import RunStore
 from company_operator.tools import ToolContext, ToolRegistry, ToolResult
+from company_operator.tools.human import HumanRequest, reply_arrived
 
 T = TypeVar("T")
 
@@ -40,6 +42,7 @@ READ_ONLY_TOOLS = frozenset(
 # Tools that only change form fields on the current page; they may be batched before a final call.
 FIELD_TOOLS = frozenset({"browser_fill", "browser_select"})
 BRAIN_RETRIES = 2
+HANDOVER_DECISIONS = 12  # extra decisions and tool calls allowed for the handover
 TRANSIENT_BACKOFF_SECONDS = 1.0
 
 
@@ -62,8 +65,10 @@ class Operator:
         pack: CompanyPack,
         store: RunStore,
         *,
+        db: OperatorDB | None = None,
         transient_backoff: float = TRANSIENT_BACKOFF_SECONDS,
     ) -> None:
+        self.db = db
         self.brain = brain
         self.verifier = verifier
         self.registry = registry
@@ -79,20 +84,29 @@ class Operator:
             tools.log.emit("run.started", run_id=state.run_id, request=state.request.model_dump())
         while not state.finished and state.phase != "awaiting_human":
             await self.step(state, tools)
+        if state.finished:
+            self._remember_episode(state)
         return state
 
     async def resume(self, state: RunState, tools: ToolContext) -> RunState:
         """Continue a paused run if its human request has been answered."""
         if state.phase == "awaiting_human" and state.pending_human:
             request = tools.human.get(state.pending_human)
+            if request.status == "pending" and request.kind == "external_reply":
+                request = await self._check_for_reply(request, tools)
             if request.status == "pending":
                 return state
-            answer = {
-                "approved": f"APPROVED by {request.responder}. You may now perform exactly the approved action.",
-                "rejected": f"REJECTED by {request.responder}: {request.response or 'no reason given'}. "
-                "Do not perform that action; continue without it or escalate.",
-                "answered": f"{request.responder} answered: {request.response}",
-            }[request.status]
+            if request.status == "approved":
+                tools.human.grant_for(request)  # the grant lives in this process's policy engine
+            if request.kind == "external_reply":
+                answer = f"A reply arrived on {request.context.get('record')}:\n{request.response}"
+            else:
+                answer = {
+                    "approved": f"APPROVED by {request.responder}. You may now perform exactly the approved action.",
+                    "rejected": f"REJECTED by {request.responder}: {request.response or 'no reason given'}. "
+                    "Do not perform that action; continue without it or escalate.",
+                    "answered": f"{request.responder} answered: {request.response}",
+                }[request.status]
             self._observe(
                 state,
                 tools,
@@ -101,7 +115,18 @@ class Operator:
                 phase="awaiting_human",
             )
             state.pending_human = None
-            self._enter(state, tools, state.resume_phase or "execute")
+            # An approval lets the plan continue. A rejection or an answer changes the situation, so the
+            # task contract itself is revisited: what "done" means may no longer be what it was.
+            revisit = request.status == "rejected" or request.kind in ("clarification", "external_reply")
+            if revisit and state.contract:
+                state.hints = [
+                    "A person's response changed the situation (see the latest result). Revise the task contract: "
+                    "success criteria must describe what should be true NOW, in light of that response."
+                ]
+                state.budgets.max_understand_reads = state.counters.understand_reads + 4
+                self._enter(state, tools, "understand")
+            else:
+                self._enter(state, tools, state.resume_phase or "execute")
             state.resume_phase = None
             self.store.save(state)
         return await self.run(state, tools)
@@ -149,8 +174,15 @@ class Operator:
             return None
         if decision.contract is None or not decision.contract.success_criteria:
             return self._escalate(state, tools, "Understand produced no checkable success criteria.")
+        revised = state.contract is not None
         state.contract = decision.contract
-        tools.log.emit("contract.created", contract=decision.contract.model_dump(), note=decision.note)
+        if revised:
+            state.counters.verify_rounds = 0  # a new definition of done gets fresh verification rounds
+        tools.log.emit(
+            "contract.revised" if revised else "contract.created",
+            contract=decision.contract.model_dump(),
+            note=decision.note,
+        )
         self._enter(state, tools, "plan")
         return None
 
@@ -184,6 +216,8 @@ class Operator:
     async def _execute(self, state: RunState, tools: ToolContext) -> None:
         assert state.plan is not None
         if not state.plan.open_steps:
+            if state.handover:
+                return self._finish_handover(state, tools)
             return self._enter(state, tools, "verify")
         state.counters.decisions += 1
         if state.counters.decisions > state.budgets.max_decisions:
@@ -193,12 +227,14 @@ class Operator:
         action = await self._ask(state, tools, "next_action", self.brain.next_action)
         state.memory.update(action.remember)
         tools.log.emit("decision", **action.model_dump(exclude={"remember"}), remember=action.remember)
-        # Stuck = the same decision again with nothing new observed in between (a retry after a failure
-        # is not stuck: the failure is a new observation).
-        fingerprint = f"{len(state.observations)}:" + action.model_dump_json(
-            include={"kind", "step_id", "call", "then", "reason"}
+        # Stuck = the same decision again when nothing failed in between: repeating something that just
+        # succeeded, or that changed nothing, is not progress. (Retrying after a failure is legitimate.)
+        fingerprint = action.model_dump_json(include={"kind", "step_id", "call", "then", "reason"})
+        last = state.last_observation
+        retrying = last is not None and not last.ok
+        state.counters.repeats = (
+            state.counters.repeats + 1 if fingerprint == state.last_decision and not retrying else 1
         )
-        state.counters.repeats = state.counters.repeats + 1 if fingerprint == state.last_decision else 1
         state.last_decision = fingerprint
         if state.counters.repeats >= state.budgets.max_repeats:
             return self._escalate(
@@ -235,6 +271,8 @@ class Operator:
             case "replan":
                 return self._replan(state, tools, action.reason)
             case "finish":
+                if state.handover:
+                    return self._finish_handover(state, tools)
                 for open_step in state.plan.open_steps:
                     open_step.status, open_step.outcome = "skipped", action.reason
                 tools.log.emit("run.finish_requested", reason=action.reason)
@@ -355,6 +393,8 @@ class Operator:
     # ── helpers ──
 
     def _replan(self, state: RunState, tools: ToolContext, reason: str) -> None:
+        if state.handover:  # no new plans while handing over
+            return self._finish_handover(state, tools)
         state.counters.replans += 1
         if state.counters.replans > state.budgets.max_replans:
             return self._escalate(state, tools, f"Replan budget exhausted. Last reason: {reason}")
@@ -363,9 +403,68 @@ class Operator:
         return self._enter(state, tools, "plan")
 
     def _escalate(self, state: RunState, tools: ToolContext, reason: str) -> None:
-        state.outcome_reason = reason
-        tools.log.emit("run.escalated", reason=reason)
+        """Stop and hand over to a person, first leaving the work in a clean, explained state if possible."""
+        handover = self.pack.company.role.handover.strip()
+        if handover and not state.handover:
+            state.handover = reason
+            done = [s for s in state.plan.steps if s.status == "done"] if state.plan else []
+            state.plan = Plan(
+                version=(state.plan.version + 1) if state.plan else 1,
+                rationale=f"Handing over: {reason}",
+                steps=[
+                    *done,
+                    PlanStep(id="handover", goal=handover, expected="The work is handed over as described."),
+                ],
+            )
+            state.current_step = "handover"
+            state.counters.repeats = 0
+            state.budgets.max_decisions = state.counters.decisions + HANDOVER_DECISIONS
+            state.budgets.max_tool_calls = state.counters.tool_calls + HANDOVER_DECISIONS
+            state.hints = [f"You are stopping because: {reason}. Do only the handover, then call step_done."]
+            tools.log.emit("run.handover", reason=reason)
+            return self._enter(state, tools, "execute")
+        state.outcome_reason = state.handover or reason
+        tools.log.emit("run.escalated", reason=state.outcome_reason)
+        return self._enter(state, tools, "escalated")
+
+    def _finish_handover(self, state: RunState, tools: ToolContext) -> None:
+        state.outcome_reason = state.handover
+        tools.log.emit("run.escalated", reason=state.handover)
         self._enter(state, tools, "escalated")
+
+    async def _check_for_reply(self, request: HumanRequest, tools: ToolContext) -> HumanRequest:
+        """Look at the record again: has something substantive appeared since the operator started waiting?"""
+        url = request.context.get("url")
+        if not url:
+            return request
+        page = await tools.browser.open(str(url))
+        if page.error:
+            return request
+        reply = reply_arrived(str(request.context.get("baseline", "")), page.snapshot)
+        if reply is None:
+            return request
+        return tools.human.answer(request.id, reply, responder=request.audience)
+
+    def _remember_episode(self, state: RunState) -> None:
+        if self.db is None:
+            return
+        changes = [
+            {"action": o.call.arguments.get("action"), "facts": o.call.arguments.get("facts", {}), "ok": o.ok}
+            for o in state.observations
+            if declares_change(o.call) and o.ok and "authorisation was withdrawn" not in o.output
+        ]
+        self.db.add_episode(
+            Episode(
+                run_id=state.run_id,
+                category=state.contract.category if state.contract else None,
+                request=state.request.text,
+                outcome=state.phase,
+                summary=state.summary or state.outcome_reason,
+                changes=changes,
+                verified=bool(state.verification and state.verification.passed),
+                created_at=state.updated_at,
+            )
+        )
 
     def _enter(self, state: RunState, tools: ToolContext, phase: Phase) -> None:
         if phase != state.phase:
@@ -406,9 +505,22 @@ class Operator:
             pack=self.pack,
             tools=self.registry.schemas(),
             sops=self._relevant_sops(state),
-            facts=list(self.pack.facts),
+            facts=self._facts(),
             log=log,
+            episodes=self._episodes(state),
         )
+
+    def _facts(self) -> list[CompanyFact]:
+        learned = self.db.facts() if self.db else []
+        return [
+            *self.pack.facts,
+            *(CompanyFact(id=f"learned-{f.id}", text=f.text, source=f.source) for f in learned),
+        ]
+
+    def _episodes(self, state: RunState) -> list[Episode]:
+        if self.db is None or not state.contract or not state.contract.category:
+            return []
+        return [e for e in self.db.episodes(state.contract.category) if e.run_id != state.run_id]
 
     def _relevant_sops(self, state: RunState) -> list[Sop]:
         if state.contract and state.contract.sop_ids:

@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 7 of 13 (independent verification and run reports). See the
+**Status:** step 8 of 13 (human-in-the-loop and memory). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -94,6 +94,41 @@ outcome:
   against those pages.
 - Integrity checks in code run alongside, e.g. that the same money movement
   never happened twice.
+
+### When the operator needs a person
+
+The operator pauses when:
+
+- **policy requires approval**, e.g. a refund above ₹500, a full-order refund
+  or a repeat claimant;
+- **it needs a supervisor's answer** to a question;
+- **it is waiting for a customer** to reply on their ticket.
+
+Requests are stored in `data/operator.db`, so a run can wait for hours, and
+can be resumed by another process.
+
+```bash
+uv run operator-run --inbox                                  # what is waiting for a person
+uv run operator-run --approve H-1001
+uv run operator-run --reject H-1001 --note "No refunds for repeat claimants without photo proof" --remember
+uv run operator-run --resume <run_id> --watch 300            # continue; keep checking for up to 5 minutes
+```
+
+`--remember` turns the note into a **learned company fact**. Every future run
+sees it next to the Company Pack's own facts. Finished runs are also kept as
+**episodes**, so a similar request later can see how earlier ones were
+handled.
+
+The same inbox is served by the API (`make api`):
+
+- `GET /requests`
+- `POST /requests/{id}/decision`
+- `GET`, `POST` and `DELETE /memory/facts`
+- `GET /memory/episodes`
+
+When a run has to stop, it first **hands over**. It puts the ticket on hold
+with an internal note saying why it stopped, what it checked and what it
+changed, so a person can pick it up.
 
 Other commands:
 

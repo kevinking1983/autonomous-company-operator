@@ -126,6 +126,10 @@ class BrowserSession:
         await self.close()
 
     @property
+    def current_url(self) -> str | None:
+        return self._page.url if self._page is not None else None
+
+    @property
     def page(self) -> Page:
         if self._page is None:
             raise RuntimeError("Browser session not started")

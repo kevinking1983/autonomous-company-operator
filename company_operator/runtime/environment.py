@@ -9,6 +9,7 @@ from pathlib import Path
 from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack
 from company_operator.config import Settings
+from company_operator.memory.store import OperatorDB
 from company_operator.policy import PolicyEngine
 from company_operator.tools import ToolContext
 from company_operator.tools.browser import BrowserSession
@@ -17,13 +18,12 @@ from company_operator.tools.human import HumanChannel
 
 @asynccontextmanager
 async def tool_environment(
-    pack: CompanyPack, settings: Settings, run_dir: Path, human: HumanChannel | None = None
+    pack: CompanyPack, settings: Settings, run_dir: Path, db: OperatorDB | None = None
 ) -> AsyncIterator[ToolContext]:
     """A ToolContext whose audit log lives in the run's directory. The browser is closed on exit.
 
-    The human channel is passed in so it can outlive a single browser session
-    (a paused run resumes in a new environment). Persisting it across processes
-    comes with the approval inbox (step 8).
+    Requests to people go to `db`, so a paused run can be resumed later in a
+    new environment, even by another process.
     """
     log = EventLog(run_dir / "events.jsonl")
     policy = PolicyEngine(pack, log)
@@ -42,5 +42,5 @@ async def tool_environment(
             log=log,
             run_dir=run_dir,
             browser=browser,
-            human=human or HumanChannel(policy, log),
+            human=HumanChannel(policy, log, db, run_id=run_dir.name),
         )

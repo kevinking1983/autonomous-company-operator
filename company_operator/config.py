@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     company_pack: str = "quickbite"
     company_packs_dir: Path = PROJECT_ROOT / "company_packs"
 
+    # The person who approves requests from the command line.
+    supervisor: str = "priya.supervisor"
+
     # Operator API.
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -41,6 +44,10 @@ class Settings(BaseSettings):
     @property
     def model_list(self) -> list[str]:
         return [m.strip() for m in self.llm_models.split(",") if m.strip()]
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "operator.db"
 
     @property
     def runs_dir(self) -> Path:

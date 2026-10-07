@@ -240,7 +240,11 @@ class RequestApproval(Tool[ApprovalInput]):
             return ToolResult.failure(
                 "policy", "Cannot be approved, it is denied: " + "; ".join(decision.reasons)
             )
-        request = ctx.human.request_approval(decision, args.justification)
+        request = ctx.human.request_approval(
+            decision,
+            args.justification,
+            context={"page": ctx.browser.current_url},
+        )
         return ToolResult.success(
             f"Approval requested ({request.id}) for {args.action}: {', '.join(decision.rules)}. "
             "Wait for the decision before acting.",
@@ -269,6 +273,47 @@ class AskHuman(Tool[AskInput]):
         )
 
 
+class WaitInput(ToolInput):
+    record_id: str = Field(
+        description="Id of the record where the reply will appear, e.g. the ticket TKT-1012."
+    )
+    about: str = Field(description="What you asked, and what answer you are waiting for.")
+
+
+class WaitForReply(Tool[WaitInput]):
+    name = "wait_for_reply"
+    description = (
+        "After asking someone outside the company (e.g. the customer, by replying on their ticket) a question, "
+        "pause until they answer on that record. You resume with their answer."
+    )
+    input_model = WaitInput
+
+    async def run(self, ctx: ToolContext, args: WaitInput) -> ToolResult:
+        url = record_url(ctx, args.record_id)
+        if url is None:
+            return ToolResult.failure(
+                "invalid_input", f"{args.record_id!r} is not a record id this company uses."
+            )
+        state = await ctx.browser.open(url)
+        if state.error:
+            return ToolResult.failure(state.error, f"Could not read {args.record_id}: {state.note}")
+        request = ctx.human.wait_for_reply(
+            args.about, context={"record": args.record_id, "url": url, "baseline": state.snapshot}
+        )
+        return ToolResult.success(
+            f"Waiting for a reply on {args.record_id} ({request.id}). The run pauses until it arrives.",
+            data={"request_id": request.id, "pending": True},
+        )
+
+
+def record_url(ctx: ToolContext, record_id: str) -> str | None:
+    for record in ctx.pack.records.values():
+        if record.find(record_id) == [record_id.strip().upper()]:
+            view = record.views[0]
+            return ctx.browser.url_for(view.system, view.path.format(id=record_id.strip().upper()))
+    return None
+
+
 def default_registry() -> ToolRegistry:
     return ToolRegistry(
         [
@@ -282,5 +327,6 @@ def default_registry() -> ToolRegistry:
             CheckPolicy(),
             RequestApproval(),
             AskHuman(),
+            WaitForReply(),
         ]
     )

@@ -23,6 +23,7 @@ from pydantic import Field
 from company_operator.audit.log import EventLog
 from company_operator.company_pack import CompanyPack
 from company_operator.company_pack.models import CompanyFact, Sop
+from company_operator.memory.store import Episode
 from company_operator.runtime.models import (
     Model,
     Observation,
@@ -67,6 +68,7 @@ class BrainContext:
     sops: list[Sop] = field(default_factory=list)
     facts: list[CompanyFact] = field(default_factory=list)
     log: EventLog | None = None  # the run's audit log, for recording model calls
+    episodes: list[Episode] = field(default_factory=list)  # how similar requests were handled before
 
     def recent(self, n: int = 6) -> list[Observation]:
         return self.state.observations[-n:]

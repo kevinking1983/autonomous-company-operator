@@ -266,10 +266,13 @@ async def test_brain_failure_fails_run_cleanly(
 async def test_tool_budget(
     ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
 ) -> None:
-    brain = ScriptedBrain(moves=[tool("check_policy", "s1", action="payments.read")] * 10)
+    brain = ScriptedBrain(
+        moves=[tool("check_policy", "s1", action="payments.read", facts={"n": i}) for i in range(10)]
+    )
     state = await operator(brain, registry, pack, store).run(new_run(store, max_tool_calls=3), ctx)
-    assert state.phase == "escalated" and "budget" in state.outcome_reason
-    assert state.counters.tool_calls == 4
+    assert state.phase == "escalated" and "Tool-call budget of 3 exhausted" in state.outcome_reason
+    # After the budget ran out, only the bounded handover ran.
+    assert ctx.log.of_type("run.handover") and state.counters.tool_calls <= 3 + 12 + 1
 
 
 def batch(*calls: ToolCall) -> Move:
@@ -344,3 +347,16 @@ async def test_decision_budget_bounds_a_wandering_brain(
         new_run(store, max_decisions=5), ctx
     )
     assert state.phase == "escalated" and "Decision budget of 5 exhausted" in state.outcome_reason
+
+
+async def test_repeating_a_successful_action_counts_as_stuck(
+    ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
+) -> None:
+    """Regression: a model filled the same field ~60 times; each fill succeeded, so it looked like progress."""
+    look_again = tool("browser_snapshot", "s1")
+    brain = ScriptedBrain(moves=[open_("support", "tickets/TKT-1001", step="s1"), *[look_again] * 10])
+    state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
+    stuck = [e for e in ctx.log.of_type("run.handover", "run.escalated") if "Stuck" in e.data["reason"]]
+    assert stuck and state.phase == "escalated"
+    # Stopped after 3 repeats, then again after 3 repeats during the handover (the script keeps repeating).
+    assert len([o for o in state.observations if o.call.tool == "browser_snapshot"]) == 6

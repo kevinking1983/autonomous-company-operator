@@ -7,7 +7,7 @@ def test_schemas_are_provider_neutral() -> None:
     click = schemas["browser_click"]["input_schema"]
     assert click["required"] == ["ref"]
     assert {"ref", "action", "facts"} <= set(click["properties"])
-    assert len(schemas) == 10
+    assert len(schemas) == 11
 
 
 async def test_unknown_tool_and_bad_arguments(registry: ToolRegistry, ctx: ToolContext) -> None:

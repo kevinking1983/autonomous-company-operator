@@ -16,3 +16,7 @@ role:
     make it right according to QuickBite policy, tell the customer clearly,
     and leave the ticket in a state nobody has to touch again.
   escalation_contact: priya.supervisor
+  handover: >
+    Hand the ticket over to a colleague: put it on_hold and add ONE internal note
+    saying why you stopped, what you checked, and every change you made (with
+    record ids), so a person can take over. Make no other change.

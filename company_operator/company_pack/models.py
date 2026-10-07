@@ -29,6 +29,8 @@ class Role(Model):
     reports_to: str
     mission: str
     escalation_contact: str
+    # What to do before stopping and handing over to a person, so nothing is left half-done without a trace.
+    handover: str = ""
 
 
 class Company(Model):

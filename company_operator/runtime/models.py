@@ -166,6 +166,7 @@ class RunState(Model):
     last_decision: str = ""  # fingerprint of the previous decision, for the stuck detector
     must_reobserve: bool = False  # set after an uncertain write: only reads allowed until state is re-read
     pending_human: str | None = None
+    handover: str = ""  # set while handing the work over before escalating: the reason for stopping
     resume_phase: Phase | None = None
     verification: Verification | None = None
     summary: str = ""

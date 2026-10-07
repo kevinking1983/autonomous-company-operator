@@ -15,7 +15,8 @@ from typing import Any
 import yaml
 
 from company_operator.company_pack import CompanyPack
-from company_operator.company_pack.models import Action, Sop
+from company_operator.company_pack.models import Action, CompanyFact, Sop
+from company_operator.memory.store import Episode
 from company_operator.runtime.brain import BrainContext
 from company_operator.runtime.models import Observation, RunState
 
@@ -44,6 +45,8 @@ OPERATING_PRINCIPLES = """\
   the fields filled on the first page only.
 - Write to customers following the tone guide. Never reveal another customer's details.
 - Before replying to a customer, make sure the thing you promise has actually happened (re-open the record).
+- When only the customer can tell you something, reply on their ticket with ONE clear question (status
+  pending_customer), then call wait_for_reply with the ticket id. You resume when they answer.
 """
 
 
@@ -56,7 +59,7 @@ def action_facts(action: Action) -> list[str]:
     return facts
 
 
-def system_prompt(pack: CompanyPack) -> str:
+def system_prompt(pack: CompanyPack, facts: list[CompanyFact] | None = None) -> str:
     c = pack.company
     systems = "\n".join(
         f"- {sid} ({s.name}, path prefix {s.base_path}): {s.purpose} Holds: {', '.join(s.holds)}."
@@ -75,7 +78,10 @@ def system_prompt(pack: CompanyPack) -> str:
     approvals = "\n".join(
         f"- {r.id}: {r.description} (applies to {', '.join(r.applies_to)})" for r in pack.approvals.rules
     )
-    facts = "\n".join(f"- {f.text}" for f in pack.facts)
+    facts_text = "\n".join(
+        f"- {f.text}" + (" (learned from a supervisor)" if f.id.startswith("learned-") else "")
+        for f in (pack.facts if facts is None else facts)
+    )
     tone = pack.guides["tone"].body if "tone" in pack.guides else ""
     return f"""You are the {c.role.title} at {c.name}, working in the {c.role.team} team (reporting to {c.role.reports_to}).
 {c.description.strip()}
@@ -99,8 +105,8 @@ and reason in `facts`, so the approval check sees the real situation.
 ## When a supervisor must approve
 {approvals}
 
-## Company facts
-{facts}
+## Company facts (these override your own judgement)
+{facts_text}
 
 ## Reply tone guide
 {tone}
@@ -223,6 +229,22 @@ def hints_block(state: RunState) -> str:
     return "## Guidance from the runtime (follow it)\n" + "\n".join(f"- {h}" for h in state.hints[-4:]) + "\n"
 
 
+def episodes_block(episodes: list[Episode]) -> str:
+    if not episodes:
+        return ""
+    lines = []
+    for e in episodes:
+        actions = ", ".join(sorted({str(c["action"]) for c in e.changes})) or "no changes"
+        lines.append(
+            f"- [{e.outcome}{', verified' if e.verified else ''}] {e.request} → {actions}. {e.summary[:300]}"
+        )
+    return (
+        "## How similar requests were handled before (for reference; this case may differ)\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def sops_block(sops: list[Sop]) -> str:
     return (
         "## Relevant procedures\n"
@@ -244,10 +266,15 @@ def sop_criteria_block(sops: list[Sop]) -> str:
 
 def understand_prompt(ctx: BrainContext) -> str:
     s = ctx.state
+    revising = (
+        "\n## You are REVISING an earlier task contract\n" + contract_block(s) + last_result(s)
+        if s.contract
+        else ""
+    )
     return f"""{request_block(s)}
 {sops_block(ctx.sops)}
 {sop_criteria_block(ctx.sops)}
-
+{revising}
 ## What you have looked at so far
 {history(s)}
 
@@ -255,8 +282,10 @@ def understand_prompt(ctx: BrainContext) -> str:
 {recent_pages(s, max_pages=5, budget=40_000)}
 {hints_block(s)}
 ## Your job now: UNDERSTAND
-Work out the outcome that is actually needed. Usually you must first read the ticket and the records it
-refers to (only reading is allowed in this phase; you may call several read tools at once).
+Work out the outcome that is actually needed. First read the ticket AND the records the procedure says to
+check (the order, the customer's claim history, the payments...): only reading is allowed in this phase, and
+you may call several read tools at once. Decide the outcome only after applying the policies and the company
+facts (including ones learned from supervisors) to what you found.
 As soon as you know enough, call commit_contract (do not re-read pages shown above):
 - outcome: one sentence describing the end state.
 - category: the ticket category that fits.
@@ -264,6 +293,10 @@ As soon as you know enough, call commit_contract (do not re-read pages shown abo
 - success_criteria: concrete statements that can be CHECKED in the systems afterwards, with real ids and
   amounts (e.g. "A refund of ₹60.00 with reason missing_item exists on payment PAY-90012 (order QB-48213)").
   Adapt the SOP's criteria to this case. Include the customer reply and the final ticket status.
+  If policy or a company fact rules something out (e.g. no refund for a repeat claimant), the criteria must
+  say so ("No refund exists for QB-48275; the ticket is on_hold"). If the outcome depends on an approval you
+  will request, write the criterion for both cases ("If approved, a refund ... exists; if rejected, none does
+  and the ticket is on_hold").
 - constraints and assumptions: anything you rely on but cannot confirm.
 """
 
@@ -274,6 +307,7 @@ def plan_prompt(ctx: BrainContext) -> str:
 {contract_block(s)}
 {plan_block(s)}{memory_block(s)}
 {sops_block(ctx.sops)}
+{episodes_block(ctx.episodes)}
 ## What has happened so far
 {history(s)}
 {hints_block(s)}
@@ -289,6 +323,7 @@ def next_action_prompt(ctx: BrainContext) -> str:
     return f"""{request_block(s)}
 {contract_block(s)}
 {plan_block(s)}{memory_block(s)}
+{episodes_block(ctx.episodes)}
 ## Your recent actions
 {history(s)}
 {last_result(s)}
