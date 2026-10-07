@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 6 of 13 (language-model brain). See the
+**Status:** step 7 of 13 (independent verification and run reports). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -68,6 +68,34 @@ Free tiers have small daily request limits, so one form (several fields, then
 submit) is completed in a single model turn.
 
 ## Run
+
+Resolve one ticket end to end, with a fresh sandbox, and watch it work:
+
+```bash
+make run TICKET=TKT-1001        # = uv run operator-run --ticket TKT-1001 --sandbox
+uv run operator-run --text "Process today's late-delivery tickets" --sandbox --headed
+```
+
+Every run gets its own folder, `data/runs/<run_id>/`, containing:
+
+| File | Contents |
+|---|---|
+| `state.json` | The checkpoint, which lets a paused run resume |
+| `events.jsonl` | The full audit log |
+| `evidence/` | Screenshots and attachments |
+| `report.md` / `report.json` | What was asked, what was done, and each success criterion with the evidence that proves it |
+
+A run only completes when an **independent verifier** has confirmed the
+outcome:
+
+- It re-reads the systems of record in a separate session that cannot change
+  anything.
+- A model that never saw the operator's reasoning judges each criterion
+  against those pages.
+- Integrity checks in code run alongside, e.g. that the same money movement
+  never happened twice.
+
+Other commands:
 
 ```bash
 make sandbox      # QuickBite's back-office apps on http://127.0.0.1:8100

@@ -8,6 +8,7 @@ problem at once.
 
 from __future__ import annotations
 
+import re
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from company_operator.company_pack.models import (
     CompensationPolicy,
     Forbidden,
     Guide,
+    RecordType,
     RequestPattern,
     Sop,
     System,
@@ -106,6 +108,12 @@ def _parse(root: Path) -> CompanyPack:
         compensation=CompensationPolicy(**_yaml(root / "policies" / "compensation.yaml")),
         approvals=ApprovalPolicy(**_yaml(root / "policies" / "approvals.yaml")),
         sops=sops,
+        records={
+            rid: RecordType(id=rid, **spec)
+            for rid, spec in (
+                _yaml(root / "records.yaml") if (root / "records.yaml").exists() else {"records": {}}
+            )["records"].items()
+        },
         guides=guides,
         facts=[CompanyFact(**f) for f in _yaml(root / "facts.yaml")["facts"]],
     )
@@ -145,6 +153,17 @@ def validate(pack: CompanyPack) -> list[str]:
         for follow in issue.follow_up:
             if follow.action not in pack.actions:
                 problems.append(f"compensation {name}: unknown follow-up action {follow.action!r}")
+
+    for record in pack.records.values():
+        try:
+            re.compile(record.id_pattern)
+        except re.error as exc:
+            problems.append(f"record {record.id}: invalid id_pattern ({exc})")
+        for view in record.views:
+            if view.system not in pack.systems:
+                problems.append(f"record {record.id}: unknown system {view.system!r}")
+            if "{id}" not in view.path:
+                problems.append(f"record {record.id}: view path {view.path!r} needs an {{id}} placeholder")
 
     seen_rules: set[str] = set()
     for rule in pack.approvals.rules:

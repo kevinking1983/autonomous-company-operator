@@ -1,0 +1,41 @@
+# The kinds of business record that appear in requests and success criteria,
+# how to recognise their ids, and which read-only pages show their current
+# state. The independent verifier uses this to gather evidence for any task
+# without task-specific code.
+records:
+  ticket:
+    id_pattern: "TKT-\\d+"
+    views:
+      - {system: support, path: "tickets/{id}"}
+  order:
+    id_pattern: "QB-\\d+"
+    views:
+      - {system: ops, path: "orders/{id}"}
+      - {system: payments, path: "transactions?q={id}"}
+      - {system: payments, path: "refunds?q={id}"}
+      - {system: payments, path: "coupons?q={id}"}
+  payment:
+    id_pattern: "PAY-\\d+"
+    views:
+      - {system: payments, path: "transactions/{id}"}
+  refund:
+    id_pattern: "RF-\\d+"
+    views:
+      - {system: payments, path: "refunds/{id}"}
+  customer:
+    id_pattern: "CUST-\\d+"
+    views:
+      - {system: ops, path: "customers/{id}"}
+      - {system: payments, path: "coupons?q={id}"}
+  restaurant:
+    id_pattern: "REST-\\d+"
+    views:
+      - {system: ops, path: "restaurants/{id}"}
+  rider:
+    id_pattern: "RDR-\\d+"
+    views:
+      - {system: ops, path: "riders/{id}"}
+  coupon:
+    id_pattern: "QBSORRY-[0-9A-F]+"
+    views:
+      - {system: payments, path: "coupons?q={id}"}

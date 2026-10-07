@@ -1,4 +1,4 @@
-.PHONY: install api sandbox sandbox-reset test lint format typecheck check dashboard dashboard-build
+.PHONY: install api run sandbox sandbox-reset test lint format typecheck check dashboard dashboard-build
 
 install:            ## Install Python + dashboard dependencies and the Chromium browser
 	uv sync
@@ -7,6 +7,9 @@ install:            ## Install Python + dashboard dependencies and the Chromium 
 
 api:                ## Run the operator API
 	uv run company-operator
+
+run:                ## Resolve one ticket end to end with a fresh sandbox: make run TICKET=TKT-1001
+	uv run operator-run --ticket $(or $(TICKET),TKT-1001) --sandbox
 
 sandbox:            ## Run the QuickBite sandbox (fresh world) on http://127.0.0.1:8100
 	uv run quickbite-sandbox

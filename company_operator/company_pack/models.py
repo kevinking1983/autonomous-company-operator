@@ -234,6 +234,25 @@ class CompanyFact(Model):
     source: str
 
 
+class RecordView(Model):
+    system: str
+    path: str  # with an {id} placeholder
+
+
+class RecordType(Model):
+    id: str
+    id_pattern: str
+    views: list[RecordView]
+
+    def find(self, text: str) -> list[str]:
+        """All ids of this record type mentioned in the text, in order of first appearance."""
+        return list(
+            dict.fromkeys(
+                m.group(0).upper() for m in re.finditer(rf"\b{self.id_pattern}\b", text, re.IGNORECASE)
+            )
+        )
+
+
 class CompanyPack(Model):
     id: str
     root: Path
@@ -245,6 +264,7 @@ class CompanyPack(Model):
     compensation: CompensationPolicy
     approvals: ApprovalPolicy
     sops: dict[str, Sop]
+    records: dict[str, RecordType]
     guides: dict[str, Guide]
     facts: list[CompanyFact]
 

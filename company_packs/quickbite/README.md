@@ -13,6 +13,7 @@ code.
 | `policies/approvals.yaml` | When a human must approve, as machine-checkable conditions |
 | `sops/*.md` | One procedure per issue type. A YAML header (which categories it applies to, the systems and actions it uses, and **checkable success criteria**) followed by human-readable steps |
 | `guides/tone.md` | How replies to customers should read |
+| `records.yaml` | Record types (ticket, order, refund…), how to recognise their ids, and the read-only pages that show them; used by the independent verifier |
 | `facts.yaml` | Durable company facts; learned facts are added here later |
 
 The pack is loaded and cross-checked by `company_operator.company_pack`.
