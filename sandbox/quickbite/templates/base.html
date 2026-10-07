@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}{{ system_title }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/sandbox.css">
+</head>
+<body class="{{ system }}">
+  <header class="topbar">
+    <span class="brand">{{ system_title }}</span>
+    {% if user %}
+    <nav aria-label="Main">
+      {% block nav %}{% endblock %}
+    </nav>
+    <div class="who">
+      <span>Signed in as <strong>{{ user.display_name }}</strong> ({{ user.role }})</span>
+      <form class="inline" method="post" action="/{{ system }}/logout"><button type="submit">Sign out</button></form>
+    </div>
+    {% endif %}
+  </header>
+  <main>
+    {% if msg %}<div class="flash ok" role="status">{{ msg }}</div>{% endif %}
+    {% if error %}<div class="flash err" role="alert">{{ error }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

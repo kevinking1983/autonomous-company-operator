@@ -1,0 +1,13 @@
+<table aria-label="Refunds">
+  <thead><tr><th>Refund</th><th>Payment</th><th>Order</th><th>Customer</th><th>Amount</th><th>Reason</th><th>Status</th><th>Initiated by</th><th>Created</th><th>Expected by</th></tr></thead>
+  <tbody>
+  {% for r in refunds %}
+    <tr><td><a href="/payments/refunds/{{ r.id }}">{{ r.id }}</a></td><td><a href="/payments/transactions/{{ r.payment_id }}">{{ r.payment_id }}</a></td>
+      <td>{{ r.order_id }}</td><td>{{ r.customer_id }}</td><td>{{ rupees(r.amount) }}</td><td>{{ r.reason_code }}</td>
+      <td><span class="badge {{ r.status }}">{{ r.status }}</span></td><td>{{ r.created_by }}</td>
+      <td>{{ fmt_time(r.created_at) }}</td><td>{{ fmt_time(r.expected_by) }}</td></tr>
+  {% else %}
+    <tr><td colspan="10" class="muted">No refunds.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

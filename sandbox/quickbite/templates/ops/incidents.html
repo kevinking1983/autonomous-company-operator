@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Incidents · {{ system_title }}{% endblock %}
+{% block nav %}{% include "ops/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Incidents</h1>
+{% include "ops/_incident_rows.html" %}
+{% endblock %}

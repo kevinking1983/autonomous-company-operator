@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Sign in · {{ system_title }}{% endblock %}
+{% block content %}
+<div class="panel login-box">
+  <h1>Sign in to {{ system_title }}</h1>
+  <form method="post" action="/{{ system }}/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+{% endblock %}

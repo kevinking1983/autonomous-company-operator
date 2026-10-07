@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Tickets · {{ system_title }}{% endblock %}
+{% block nav %}{% include "support/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Tickets</h1>
+<form class="filters" method="get" action="/support/tickets" role="search">
+  <div><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Ticket, order, customer…"></div>
+  <div><label for="status">Status</label>
+    <select id="status" name="status">
+      <option value="active" {% if status == 'active' %}selected{% endif %}>Active (open, pending, on hold)</option>
+      <option value="all" {% if status == 'all' %}selected{% endif %}>All</option>
+      {% for s in statuses %}<option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></div>
+  <div><label for="category">Category</label>
+    <select id="category" name="category">
+      <option value="">Any</option>
+      {% for c in categories %}<option value="{{ c }}" {% if category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select></div>
+  <button type="submit">Filter</button>
+</form>
+<p class="muted">{{ tickets|length }} ticket(s)</p>
+<table aria-label="Tickets">
+  <thead><tr><th>Ticket</th><th>Subject</th><th>Customer</th><th>Order</th><th>Category</th><th>Priority</th><th>Status</th><th>Created</th></tr></thead>
+  <tbody>
+  {% for t in tickets %}
+    <tr>
+      <td><a href="/support/tickets/{{ t.id }}">{{ t.id }}</a></td>
+      <td>{{ t.subject }}</td>
+      <td>{{ t.requester_name }}</td>
+      <td>{{ t.order_id or "—" }}</td>
+      <td>{{ t.category or "untriaged" }}</td>
+      <td>{{ t.priority }}</td>
+      <td><span class="badge {{ t.status }}">{{ t.status }}</span></td>
+      <td>{{ fmt_time(t.created_at) }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No tickets match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

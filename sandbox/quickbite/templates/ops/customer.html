@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "ops/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Customer: {{ customer.name }}</h1>
+<div class="grid">
+  <section class="panel" aria-label="Orders">
+    <h2>Orders</h2>
+    {% with rows=orders, show_customer=False, show_restaurant=True %}{% include "ops/_order_rows.html" %}{% endwith %}
+  </section>
+  <aside>
+    <section class="panel" aria-label="Profile">
+      <h2>Profile</h2>
+      <dl class="facts">
+        <dt>ID</dt><dd>{{ customer.id }}</dd>
+        <dt>Email</dt><dd>{{ customer.email }}</dd>
+        <dt>Phone</dt><dd>{{ customer.phone }}</dd>
+        <dt>City</dt><dd>{{ customer.city }}</dd>
+        <dt>Tier</dt><dd>{{ customer.tier }}</dd>
+        <dt>Joined</dt><dd>{{ fmt_time(customer.joined_at) }}</dd>
+      </dl>
+    </section>
+    <section class="panel" aria-label="Claims risk">
+      <h2>Refund claims (last 30 days)</h2>
+      <p><strong class="{% if claims|length >= 3 %}warn{% endif %}">{{ claims|length }} claim(s)</strong>
+        {% if claims|length >= 3 %}<span class="badge flagged">high claim frequency</span>{% endif %}</p>
+      {% for c in claims %}
+        <p class="muted">{{ c.id }} · {{ c.order_id }} · {{ c.reason_code }} · {{ rupees(c.amount) }} · {{ fmt_time(c.created_at) }}</p>
+      {% endfor %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

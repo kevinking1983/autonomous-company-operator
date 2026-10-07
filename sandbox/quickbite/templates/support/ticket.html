@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}{{ ticket.id }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "support/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>{{ ticket.id }}: {{ ticket.subject }}</h1>
+<div class="grid">
+  <div>
+    <section class="panel thread" aria-label="Conversation">
+      <h2>Conversation</h2>
+      {% for m in messages %}
+      <article class="msg {{ m.author_type }} {% if m.internal %}internal{% endif %}">
+        <div class="meta">
+          <strong>{{ m.author }}</strong> · {{ m.author_type }}{% if m.internal %} · internal note{% endif %} · {{ fmt_time(m.at) }}
+        </div>
+        <div>{{ m.body | e | replace("\n", "<br>"|safe) }}</div>
+      </article>
+      {% endfor %}
+    </section>
+
+    {% if attachments %}
+    <section class="panel" aria-label="Attachments">
+      <h2>Attachments</h2>
+      {% for a in attachments %}
+      <figure>
+        <a href="/support/attachments/{{ a.id }}">{{ a.filename }}</a>
+        {% if a.content_type.startswith("image/") %}
+        <img class="attachment" src="/support/attachments/{{ a.id }}" alt="Customer attachment {{ a.filename }}">
+        {% endif %}
+        <figcaption class="muted">Uploaded {{ fmt_time(a.uploaded_at) }}</figcaption>
+      </figure>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% set reply_form %}
+      <form method="post" action="/support/tickets/{{ ticket.id }}/reply" aria-label="Reply to customer">
+        <label for="reply-body">Reply to customer</label>
+        <textarea id="reply-body" name="body" required></textarea>
+        <label for="reply-status">After sending, set status to</label>
+        <select id="reply-status" name="set_status">
+          <option value="">(leave unchanged)</option>
+          {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+        <button type="submit">{% if layout == "shifted" %}Post response{% else %}Send reply{% endif %}</button>
+      </form>
+    {% endset %}
+    {% set note_form %}
+      <form method="post" action="/support/tickets/{{ ticket.id }}/note" aria-label="Internal note">
+        <label for="note-body">Internal note (not visible to customer)</label>
+        <textarea id="note-body" name="body" required></textarea>
+        <button type="submit" class="secondary">Add internal note</button>
+      </form>
+    {% endset %}
+    <section class="panel">
+      {% if layout == "shifted" %}{{ note_form }}<hr>{{ reply_form }}{% else %}{{ reply_form }}<hr>{{ note_form }}{% endif %}
+    </section>
+  </div>
+
+  <aside>
+    <section class="panel" aria-label="Ticket details">
+      <h2>Ticket</h2>
+      <dl class="facts">
+        <dt>Status</dt><dd><span class="badge {{ ticket.status }}">{{ ticket.status }}</span></dd>
+        <dt>Category</dt><dd>{{ ticket.category or "untriaged" }}</dd>
+        <dt>Priority</dt><dd>{{ ticket.priority }}</dd>
+        <dt>Channel</dt><dd>{{ ticket.channel }}</dd>
+        <dt>Order</dt><dd>{{ ticket.order_id or "—" }}</dd>
+        <dt>Linked to</dt><dd>{% if ticket.linked_ticket_id %}<a href="/support/tickets/{{ ticket.linked_ticket_id }}">{{ ticket.linked_ticket_id }}</a>{% else %}—{% endif %}</dd>
+        <dt>Created</dt><dd>{{ fmt_time(ticket.created_at) }}</dd>
+        <dt>Updated</dt><dd>{{ fmt_time(ticket.updated_at) }}</dd>
+      </dl>
+      <form method="post" action="/support/tickets/{{ ticket.id }}/update" aria-label="Update ticket">
+        <label for="upd-status">Status</label>
+        <select id="upd-status" name="status">
+          {% for s in statuses %}<option value="{{ s }}" {% if ticket.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+        <label for="upd-category">Category</label>
+        <select id="upd-category" name="category">
+          <option value="">(untriaged)</option>
+          {% for c in categories %}<option value="{{ c }}" {% if ticket.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+        <label for="upd-link">Link to ticket (duplicate of)</label>
+        <input id="upd-link" name="linked_ticket_id" value="{{ ticket.linked_ticket_id or '' }}" placeholder="TKT-…">
+        <button type="submit">{% if layout == "shifted" %}Apply changes{% else %}Update ticket{% endif %}</button>
+      </form>
+    </section>
+
+    <section class="panel" aria-label="Customer">
+      <h2>Customer</h2>
+      <dl class="facts">
+        <dt>Name</dt><dd>{{ ticket.requester_name }}</dd>
+        <dt>Email</dt><dd>{{ ticket.requester_email }}</dd>
+        <dt>Customer ID</dt><dd>{{ ticket.customer_id }}</dd>
+      </dl>
+    </section>
+
+    <section class="panel" aria-label="Other tickets from this customer">
+      <h2>Other tickets from this customer</h2>
+      {% for o in other_tickets %}
+        <p><a href="/support/tickets/{{ o.id }}">{{ o.id }}</a> · {{ o.subject }}<br>
+        <span class="muted">{{ o.order_id or "no order" }} · {{ o.category or "untriaged" }} · <span class="badge {{ o.status }}">{{ o.status }}</span> · {{ fmt_time(o.created_at) }}</span></p>
+      {% else %}
+        <p class="muted">None.</p>
+      {% endfor %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

@@ -1,4 +1,4 @@
-.PHONY: install api test lint format typecheck check dashboard dashboard-build
+.PHONY: install api sandbox sandbox-reset test lint format typecheck check dashboard dashboard-build
 
 install:            ## Install Python + dashboard dependencies and the Chromium browser
 	uv sync
@@ -7,6 +7,12 @@ install:            ## Install Python + dashboard dependencies and the Chromium 
 
 api:                ## Run the operator API
 	uv run company-operator
+
+sandbox:            ## Run the QuickBite sandbox (fresh world) on http://127.0.0.1:8100
+	uv run quickbite-sandbox
+
+sandbox-reset:      ## Reset the running sandbox to its seeded state and clear all faults
+	curl -fsS -X POST -H "X-Control-Key: $${QUICKBITE_CONTROL_KEY:-sandbox-control}" http://127.0.0.1:8100/_control/reset
 
 test:               ## Run the test suite
 	uv run pytest

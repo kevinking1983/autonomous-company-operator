@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ restaurant.name }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "ops/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Restaurant: {{ restaurant.name }} {% if restaurant.flagged %}<span class="badge flagged">flagged for quality review</span>{% endif %}</h1>
+<div class="grid">
+  <div>
+    <section class="panel" aria-label="Incidents">
+      <h2>Incidents</h2>
+      {% include "ops/_incident_rows.html" %}
+    </section>
+    <section class="panel" aria-label="Recent orders">
+      <h2>Recent orders</h2>
+      {% with rows=orders, show_customer=True, show_restaurant=False %}{% include "ops/_order_rows.html" %}{% endwith %}
+    </section>
+  </div>
+  <aside class="panel" aria-label="Details">
+    <h2>Details</h2>
+    <dl class="facts">
+      <dt>ID</dt><dd>{{ restaurant.id }}</dd>
+      <dt>Area</dt><dd>{{ restaurant.area }}</dd>
+      <dt>Rating</dt><dd>{{ restaurant.rating }}</dd>
+      <dt>Status</dt><dd>{{ restaurant.status }}</dd>
+    </dl>
+    <form method="post" action="/ops/restaurants/{{ restaurant.id }}/flag">
+      <input type="hidden" name="flagged" value="{{ '0' if restaurant.flagged else '1' }}">
+      <button type="submit" class="secondary">{% if restaurant.flagged %}Remove quality-review flag{% else %}Flag for quality review{% endif %}</button>
+    </form>
+  </aside>
+</div>
+{% endblock %}

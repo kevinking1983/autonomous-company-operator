@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ rider.name }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "ops/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Rider: {{ rider.name }}</h1>
+<div class="grid">
+  <div>
+    <section class="panel" aria-label="Incidents">
+      <h2>Incidents</h2>
+      {% include "ops/_incident_rows.html" %}
+    </section>
+    <section class="panel" aria-label="Recent deliveries">
+      <h2>Recent deliveries</h2>
+      {% with rows=orders, show_customer=False, show_restaurant=False %}{% include "ops/_order_rows.html" %}{% endwith %}
+    </section>
+  </div>
+  <aside class="panel" aria-label="Details">
+    <h2>Details</h2>
+    <dl class="facts">
+      <dt>ID</dt><dd>{{ rider.id }}</dd>
+      <dt>Phone</dt><dd>{{ rider.phone }}</dd>
+      <dt>Vehicle</dt><dd>{{ rider.vehicle }}</dd>
+      <dt>Rating</dt><dd>{{ rider.rating }}</dd>
+    </dl>
+  </aside>
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{# expects `rows`; optional columns controlled by show_customer / show_restaurant #}
+<table aria-label="Orders">
+  <thead><tr><th>Order</th>{% if show_customer %}<th>Customer</th>{% endif %}{% if show_restaurant %}<th>Restaurant</th>{% endif %}<th>Status</th><th>Total</th><th>Placed</th></tr></thead>
+  <tbody>
+  {% for o in rows %}
+    <tr>
+      <td><a href="/ops/orders/{{ o.id }}">{{ o.id }}</a></td>
+      {% if show_customer %}<td>{{ o.customer_name }}</td>{% endif %}
+      {% if show_restaurant %}<td>{{ o.restaurant_name }}</td>{% endif %}
+      <td><span class="badge {{ o.status }}">{{ o.status }}</span></td>
+      <td>{{ rupees(o.total) }}</td>
+      <td>{{ fmt_time(o.placed_at) }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No orders.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

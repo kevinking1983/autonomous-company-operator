@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Coupons · {{ system_title }}{% endblock %}
+{% block nav %}{% include "payments/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Coupons</h1>
+<div class="grid">
+  <div>
+    <form class="filters" method="get" action="/payments/coupons" role="search">
+      <div><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Coupon code, customer ID, order ID…"></div>
+      <button type="submit">Search</button>
+    </form>
+    <table aria-label="Coupons">
+      <thead><tr><th>Code</th><th>Customer</th><th>Order</th><th>Value</th><th>Reason</th><th>Issued by</th><th>Issued</th><th>Expires</th></tr></thead>
+      <tbody>
+      {% for c in coupons %}
+        <tr><td>{{ c.code }}</td><td>{{ c.customer_id }}</td><td>{{ c.order_id or "—" }}</td><td>{{ rupees(c.value) }}</td><td>{{ c.reason }}</td>
+          <td>{{ c.created_by }}</td><td>{{ fmt_time(c.created_at) }}</td><td>{{ fmt_time(c.expires_at) }}</td></tr>
+      {% else %}
+        <tr><td colspan="8" class="muted">No coupons.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <aside class="panel" aria-label="Issue coupon">
+    <h2>Issue coupon</h2>
+    <form method="post" action="/payments/coupons">
+      <label for="cp-customer">Customer ID</label>
+      <input id="cp-customer" name="customer_id" required placeholder="CUST-…">
+      <label for="cp-order">Related order (optional)</label>
+      <input id="cp-order" name="order_id" placeholder="QB-…">
+      <label for="cp-value">Value (₹, max {{ rupees(max_value) }})</label>
+      <input id="cp-value" name="value" inputmode="decimal" required>
+      <label for="cp-reason">Reason</label>
+      <select id="cp-reason" name="reason" required>
+        <option value="">Select…</option>
+        {% for r in reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+      </select>
+      <label for="cp-validity">Valid for (days)</label>
+      <input id="cp-validity" name="validity_days" type="number" min="1" max="90" value="30">
+      <button type="submit">{% if layout == "shifted" %}Generate voucher{% else %}Issue coupon{% endif %}</button>
+    </form>
+  </aside>
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Refund ledger · {{ system_title }}{% endblock %}
+{% block nav %}{% include "payments/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Refund ledger</h1>
+<form class="filters" method="get" action="/payments/refunds" role="search">
+  <div><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Refund ID, order ID, payment ID, customer ID…"></div>
+  <button type="submit">Search</button>
+</form>
+{% include "payments/_refund_rows.html" %}
+{% endblock %}

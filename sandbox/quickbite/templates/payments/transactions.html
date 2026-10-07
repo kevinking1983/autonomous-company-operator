@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Transactions · {{ system_title }}{% endblock %}
+{% block nav %}{% include "payments/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Transactions</h1>
+<form class="filters" method="get" action="/payments/transactions" role="search">
+  <div><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Payment ID, order ID, customer ID, gateway ref…"></div>
+  <button type="submit">Search</button>
+</form>
+<table aria-label="Payments">
+  <thead><tr><th>Payment</th><th>Order</th><th>Customer</th><th>Amount</th><th>Method</th><th>Gateway ref</th><th>Status</th><th>Captured</th></tr></thead>
+  <tbody>
+  {% for p in payments %}
+    <tr><td><a href="/payments/transactions/{{ p.id }}">{{ p.id }}</a></td><td>{{ p.order_id }}</td><td>{{ p.customer_id }}</td>
+      <td>{{ rupees(p.amount) }}</td><td>{{ p.method }}</td><td>{{ p.gateway_ref }}</td>
+      <td><span class="badge {{ p.status }}">{{ p.status }}</span></td><td>{{ fmt_time(p.captured_at) }}</td></tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No transactions match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

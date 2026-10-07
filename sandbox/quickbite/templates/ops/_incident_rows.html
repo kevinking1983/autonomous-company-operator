@@ -1,0 +1,12 @@
+<table aria-label="Incidents">
+  <thead><tr><th>Incident</th><th>Against</th><th>Order</th><th>Category</th><th>Description</th><th>Raised by</th><th>When</th></tr></thead>
+  <tbody>
+  {% for inc in incidents %}
+    <tr><td>{{ inc.id }}</td><td>{{ inc.target_type }} {{ inc.target_id }}</td>
+      <td>{% if inc.order_id %}<a href="/ops/orders/{{ inc.order_id }}">{{ inc.order_id }}</a>{% else %}—{% endif %}</td>
+      <td>{{ inc.category }}</td><td>{{ inc.description }}</td><td>{{ inc.created_by }}</td><td>{{ fmt_time(inc.created_at) }}</td></tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No incidents.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

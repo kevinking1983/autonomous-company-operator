@@ -12,6 +12,10 @@ dependencies = [
     "httpx>=0.27",
     "playwright>=1.47",
     "pyyaml>=6.0",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.32",
+    "pillow>=12.3.0",
+    "tzdata>=2026.5",
 ]
 
 [dependency-groups]
@@ -25,6 +29,7 @@ dev = [
 
 [project.scripts]
 company-operator = "company_operator.api.app:main"
+quickbite-sandbox = "sandbox.quickbite.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -39,6 +44,8 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# Line length is enforced by the formatter; long SQL and message strings are left intact.
+ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,0 +1,55 @@
+/* Deliberately plain "internal tool" styling. Each system gets its own accent colour. */
+:root { --accent: #475569; --bg: #f8fafc; --line: #e2e8f0; --text: #0f172a; --muted: #64748b; }
+body.support  { --accent: #0f766e; }
+body.ops      { --accent: #b45309; }
+body.payments { --accent: #4338ca; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+header.topbar { background: var(--accent); color: #fff; display: flex; align-items: center; gap: 24px; padding: 0 20px; height: 48px; }
+header.topbar .brand { font-weight: 700; }
+header.topbar nav a { color: #fff; opacity: .85; text-decoration: none; margin-right: 16px; }
+header.topbar nav a:hover { opacity: 1; text-decoration: underline; }
+header.topbar .who { margin-left: auto; display: flex; gap: 12px; align-items: center; font-size: 13px; }
+header.topbar .who button { background: transparent; border: 1px solid #fff8; color: #fff; padding: 3px 10px; border-radius: 4px; cursor: pointer; }
+main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 20px; margin: 0 0 12px; }
+h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+a { color: var(--accent); }
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
+.cols-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+table { width: 100%; border-collapse: collapse; background: #fff; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); background: #f1f5f9; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+dl.facts dt { color: var(--muted); }
+dl.facts dd { margin: 0; }
+form.inline { display: inline; }
+label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 8px 0 3px; }
+input, select, textarea { font: inherit; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 4px; width: 100%; background: #fff; }
+textarea { min-height: 90px; }
+button, .button { font: inherit; background: var(--accent); color: #fff; border: 0; border-radius: 4px; padding: 7px 14px; cursor: pointer; margin-top: 10px; text-decoration: none; display: inline-block; }
+button.secondary { background: #e2e8f0; color: var(--text); }
+button.danger { background: #b91c1c; }
+.filters { display: flex; gap: 8px; align-items: end; margin-bottom: 12px; }
+.filters > * { width: auto; }
+.filters button { margin: 0; }
+.flash { padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; }
+.flash.ok { background: #dcfce7; border: 1px solid #86efac; }
+.flash.err { background: #fee2e2; border: 1px solid #fca5a5; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #e2e8f0; }
+.badge.open, .badge.processing, .badge.preparing, .badge.placed, .badge.accepted { background: #fef3c7; }
+.badge.resolved, .badge.closed, .badge.completed, .badge.delivered, .badge.captured { background: #dcfce7; }
+.badge.pending_customer, .badge.on_hold, .badge.picked_up, .badge.partially_refunded { background: #e0e7ff; }
+.badge.cancelled, .badge.refunded, .badge.flagged { background: #fee2e2; }
+.thread .msg { border-left: 3px solid var(--line); padding: 8px 12px; margin-bottom: 10px; background: #fff; }
+.thread .msg.customer { border-color: #0ea5e9; }
+.thread .msg.agent { border-color: var(--accent); }
+.thread .msg.internal { background: #fffbeb; border-color: #f59e0b; }
+.thread .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.muted { color: var(--muted); }
+.warn { color: #b91c1c; font-weight: 600; }
+.login-box { max-width: 360px; margin: 80px auto; }
+details.more { border: 1px dashed #cbd5e1; border-radius: 4px; padding: 8px 12px; margin-top: 12px; }
+details.more summary { cursor: pointer; color: var(--muted); }
+img.attachment { max-width: 100%; border: 1px solid var(--line); border-radius: 4px; }

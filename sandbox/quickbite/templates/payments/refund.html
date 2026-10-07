@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ refund.id }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "payments/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Refund {{ refund.id }} <span class="badge {{ refund.status }}">{{ refund.status }}</span></h1>
+<section class="panel" aria-label="Refund details">
+  <dl class="facts">
+    <dt>Amount</dt><dd>{{ rupees(refund.amount) }}</dd>
+    <dt>Payment</dt><dd><a href="/payments/transactions/{{ refund.payment_id }}">{{ refund.payment_id }}</a></dd>
+    <dt>Order</dt><dd>{{ refund.order_id }}</dd>
+    <dt>Customer</dt><dd>{{ refund.customer_id }}</dd>
+    <dt>Reason</dt><dd>{{ refund.reason_code }}</dd>
+    <dt>Note</dt><dd>{{ refund.note or "—" }}</dd>
+    <dt>Initiated by</dt><dd>{{ refund.created_by }}</dd>
+    <dt>Initiated</dt><dd>{{ fmt_time(refund.created_at) }}</dd>
+    <dt>Expected in account by</dt><dd>{{ fmt_time(refund.expected_by) }}</dd>
+    <dt>Completed</dt><dd>{{ fmt_time(refund.completed_at) }}</dd>
+  </dl>
+</section>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ payment.id }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "payments/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Payment {{ payment.id }} <span class="badge {{ payment.status }}">{{ payment.status }}</span></h1>
+<div class="grid">
+  <div>
+    <section class="panel" aria-label="Payment details">
+      <h2>Payment details</h2>
+      <dl class="facts">
+        <dt>Order</dt><dd>{{ payment.order_id }}</dd>
+        <dt>Customer</dt><dd>{{ payment.customer_id }}</dd>
+        <dt>Amount captured</dt><dd>{{ rupees(payment.amount) }}</dd>
+        <dt>Method</dt><dd>{{ payment.method }}</dd>
+        <dt>Gateway ref</dt><dd>{{ payment.gateway_ref }}</dd>
+        <dt>Captured</dt><dd>{{ fmt_time(payment.captured_at) }}</dd>
+        <dt>Refundable balance</dt><dd><strong>{{ rupees(refundable) }}</strong></dd>
+      </dl>
+    </section>
+    <section class="panel" aria-label="Other payments for this order">
+      <h2>Other payments for order {{ payment.order_id }}</h2>
+      {% for s in same_order %}
+        <p><a href="/payments/transactions/{{ s.id }}">{{ s.id }}</a> · {{ rupees(s.amount) }} · <span class="badge {{ s.status }}">{{ s.status }}</span> · {{ fmt_time(s.captured_at) }}</p>
+      {% else %}<p class="muted">None.</p>{% endfor %}
+    </section>
+    <section class="panel" aria-label="Refunds on this payment">
+      <h2>Refunds on this payment</h2>
+      {% include "payments/_refund_rows.html" %}
+    </section>
+  </div>
+  <aside>
+    {% set refund_form %}
+      {% if refundable > 0 %}
+      <form method="post" action="/payments/transactions/{{ payment.id }}/refund" aria-label="Refund">
+        <label for="refund-amount">Refund amount (₹)</label>
+        <input id="refund-amount" name="amount" inputmode="decimal" required placeholder="max {{ '%.2f' % (refundable / 100) }}">
+        <label for="refund-reason">Reason</label>
+        <select id="refund-reason" name="reason_code" required>
+          <option value="">Select…</option>
+          {% for r in reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+        <label for="refund-note">Note</label>
+        <input id="refund-note" name="note">
+        <button type="submit">{% if layout == "shifted" %}Process refund{% else %}Review refund{% endif %}</button>
+      </form>
+      {% else %}
+      <p class="muted">Nothing left to refund on this payment.</p>
+      {% endif %}
+    {% endset %}
+    <section class="panel" aria-label="Refund actions">
+      <h2>Refund</h2>
+      {% if layout == "shifted" %}<details class="more"><summary>Payment actions</summary>{{ refund_form }}</details>{% else %}{{ refund_form }}{% endif %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

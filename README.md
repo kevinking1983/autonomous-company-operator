@@ -12,7 +12,7 @@ checks independently that the outcome really happened, and returns evidence.
 > Built against the CentrAlign AI Founding Engineer problem statement.
 > See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
 
-**Status:** step 1 of 13 (project scaffold). See the
+**Status:** step 2 of 13 (QuickBite sandbox). See the
 [build plan](docs/BLUEPRINT.md#6-build-plan).
 
 ---
@@ -47,9 +47,17 @@ make install      # Python deps, Chromium for Playwright, dashboard deps
 ## Run
 
 ```bash
+make sandbox      # QuickBite's back-office apps on http://127.0.0.1:8100
 make api          # operator API on http://127.0.0.1:8000
 make dashboard    # dashboard on http://localhost:5173
 ```
+
+The sandbox's systems, logins, scenario catalogue and fault injection are
+documented in [`sandbox/quickbite/README.md`](sandbox/quickbite/README.md).
+
+| Support Desk | Ops Admin |
+|---|---|
+| ![Support Desk ticket](docs/screenshots/support-ticket-wrong-order.png) | ![Ops Admin order](docs/screenshots/ops-order-missing-item.png) |
 
 ## Develop
 

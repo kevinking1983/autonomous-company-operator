@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Confirm refund · {{ system_title }}{% endblock %}
+{% block nav %}{% include "payments/_nav.html" %}{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:520px">
+  <h1>Confirm refund</h1>
+  <p>You are about to refund <strong>{{ rupees(amount) }}</strong> on payment <strong>{{ payment.id }}</strong>
+    (order {{ payment.order_id }}, customer {{ payment.customer_id }}).</p>
+  <dl class="facts">
+    <dt>Reason</dt><dd>{{ reason_code }}</dd>
+    <dt>Note</dt><dd>{{ note or "—" }}</dd>
+    <dt>Refundable balance</dt><dd>{{ rupees(refundable) }}</dd>
+  </dl>
+  <p class="warn">Refunds cannot be reversed once initiated.</p>
+  <form method="post" action="/payments/transactions/{{ payment.id }}/refund/confirm">
+    <input type="hidden" name="amount" value="{{ amount }}">
+    <input type="hidden" name="reason_code" value="{{ reason_code }}">
+    <input type="hidden" name="note" value="{{ note }}">
+    <button type="submit">{% if layout == "shifted" %}Authorise refund{% else %}Confirm refund{% endif %}</button>
+    <a class="button secondary" href="/payments/transactions/{{ payment.id }}" style="background:#e2e8f0;color:#0f172a">Cancel</a>
+  </form>
+</div>
+{% endblock %}

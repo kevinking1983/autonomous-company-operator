@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}{{ order.id }} · {{ system_title }}{% endblock %}
+{% block nav %}{% include "ops/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Order {{ order.id }} <span class="badge {{ order.status }}">{{ order.status }}</span></h1>
+<div class="grid">
+  <div>
+    <section class="panel" aria-label="Items">
+      <h2>Items</h2>
+      <table>
+        <thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr></thead>
+        <tbody>
+        {% for i in items %}
+          <tr><td>{{ i.line_no }}</td><td>{{ i.name }}</td><td>{{ i.qty }}</td><td>{{ rupees(i.unit_price) }}</td><td>{{ rupees(i.unit_price * i.qty) }}</td></tr>
+        {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr><td colspan="4">Subtotal</td><td>{{ rupees(order.subtotal) }}</td></tr>
+          <tr><td colspan="4">Delivery fee</td><td>{{ rupees(order.delivery_fee) }}</td></tr>
+          <tr><td colspan="4">Taxes</td><td>{{ rupees(order.taxes) }}</td></tr>
+          <tr><th colspan="4">Order total</th><th>{{ rupees(order.total) }}</th></tr>
+        </tfoot>
+      </table>
+    </section>
+
+    <section class="panel" aria-label="Delivery timeline">
+      <h2>Delivery timeline</h2>
+      <dl class="facts">
+        <dt>Placed</dt><dd>{{ fmt_time(order.placed_at) }}</dd>
+        <dt>Promised by</dt><dd>{{ fmt_time(order.promised_at) }}</dd>
+        <dt>Delivered</dt><dd>{{ fmt_time(order.delivered_at) }}</dd>
+        {% if order.delivered_at %}
+        {% set late = minutes_between(order.promised_at, order.delivered_at) %}
+        <dt>Delivery delay</dt><dd>{% if late > 0 %}<span class="warn">{{ late }} minutes late</span>{% else %}On time ({{ -late }} min early){% endif %}</dd>
+        {% endif %}
+        {% if order.cancelled_at %}
+        <dt>Cancelled</dt><dd>{{ fmt_time(order.cancelled_at) }} by {{ order.cancelled_by }} ({{ order.cancel_reason }})</dd>
+        {% endif %}
+      </dl>
+      <table aria-label="Order events">
+        <thead><tr><th>Time</th><th>Event</th><th>Note</th></tr></thead>
+        <tbody>
+        {% for e in events %}<tr><td>{{ fmt_time(e.at) }}</td><td>{{ e.event }}</td><td>{{ e.note or "" }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" aria-label="Restaurant packing log">
+      <h2>Restaurant packing log</h2>
+      {% if packing %}
+      <table>
+        <thead><tr><th>#</th><th>Item</th><th>Packed</th><th>Checked by</th></tr></thead>
+        <tbody>
+        {% for p in packing %}
+          <tr><td>{{ p.line_no }}</td><td>{{ p.item_name }}</td><td>{% if p.packed %}Yes{% else %}<span class="warn">NOT PACKED</span>{% endif %}</td><td>{{ p.checked_by }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="muted">No packing log recorded.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-label="Incidents on this order">
+      <h2>Incidents on this order</h2>
+      {% for inc in incidents %}
+        <p><strong>{{ inc.id }}</strong> · {{ inc.target_type }} {{ inc.target_id }} · {{ inc.category }} · {{ fmt_time(inc.created_at) }}<br>{{ inc.description }}</p>
+      {% else %}<p class="muted">None.</p>{% endfor %}
+    </section>
+  </div>
+
+  <aside>
+    <section class="panel" aria-label="Customer">
+      <h2>Customer</h2>
+      <dl class="facts">
+        <dt>Name</dt><dd><a href="/ops/customers/{{ customer.id }}">{{ customer.name }}</a></dd>
+        <dt>ID</dt><dd>{{ customer.id }}</dd>
+        <dt>Phone</dt><dd>{{ customer.phone }}</dd>
+        <dt>Address</dt><dd>{{ order.address }}</dd>
+      </dl>
+    </section>
+    <section class="panel" aria-label="Restaurant and rider">
+      <h2>Restaurant &amp; rider</h2>
+      <dl class="facts">
+        <dt>Restaurant</dt><dd><a href="/ops/restaurants/{{ restaurant.id }}">{{ restaurant.name }}</a> ({{ restaurant.id }})</dd>
+        <dt>Rider</dt><dd>{% if rider %}<a href="/ops/riders/{{ rider.id }}">{{ rider.name }}</a> ({{ rider.id }}){% else %}Not assigned{% endif %}</dd>
+      </dl>
+    </section>
+
+    {% set cancel_form %}
+      {% if cancellable %}
+      <form method="post" action="/ops/orders/{{ order.id }}/cancel" aria-label="Cancel order">
+        <label for="cancel-reason">Cancellation reason</label>
+        <select id="cancel-reason" name="reason" required>
+          <option value="">Select…</option>
+          {% for r in cancel_reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+        <label for="cancel-note">Note</label>
+        <input id="cancel-note" name="note">
+        <button type="submit" class="danger">{% if layout == "shifted" %}Void order{% else %}Cancel order{% endif %}</button>
+      </form>
+      {% else %}
+      <p class="muted">This order can no longer be cancelled (status: {{ order.status }}).</p>
+      {% endif %}
+    {% endset %}
+    <section class="panel" aria-label="Order actions">
+      <h2>Order actions</h2>
+      {% if layout == "shifted" %}<details class="more"><summary>More order actions</summary>{{ cancel_form }}</details>{% else %}{{ cancel_form }}{% endif %}
+    </section>
+
+    <section class="panel" aria-label="Raise incident">
+      <h2>Raise incident</h2>
+      <form method="post" action="/ops/incidents">
+        <input type="hidden" name="order_id" value="{{ order.id }}">
+        <label for="inc-target">Against</label>
+        <select id="inc-target" name="target" required>
+          <option value="restaurant:{{ restaurant.id }}">Restaurant: {{ restaurant.name }} ({{ restaurant.id }})</option>
+          {% if rider %}<option value="rider:{{ rider.id }}">Rider: {{ rider.name }} ({{ rider.id }})</option>{% endif %}
+        </select>
+        <label for="inc-category">Category</label>
+        <select id="inc-category" name="category" required>
+          <option value="">Select…</option>
+          {% for kind, cats in incident_categories.items() %}
+          <optgroup label="{{ kind }}">{% for c in cats %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</optgroup>
+          {% endfor %}
+        </select>
+        <label for="inc-desc">Description</label>
+        <textarea id="inc-desc" name="description" required></textarea>
+        <button type="submit">{% if layout == "shifted" %}Log incident{% else %}Raise incident{% endif %}</button>
+      </form>
+    </section>
+  </aside>
+</div>
+{% endblock %}

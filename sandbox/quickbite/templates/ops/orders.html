@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Orders · {{ system_title }}{% endblock %}
+{% block nav %}{% include "ops/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Orders</h1>
+<form class="filters" method="get" action="/ops/orders" role="search">
+  <div><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Order ID, customer, phone, restaurant…"></div>
+  <div><label for="status">Status</label>
+    <select id="status" name="status">
+      <option value="">Any</option>
+      {% for s in ["placed","accepted","preparing","picked_up","delivered","cancelled"] %}
+      <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></div>
+  <button type="submit">Search</button>
+</form>
+{% with rows=orders, show_customer=True, show_restaurant=True %}{% include "ops/_order_rows.html" %}{% endwith %}
+{% endblock %}
