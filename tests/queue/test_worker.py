@@ -1,5 +1,6 @@
 """Workers seeing tasks through: running, pausing for people, crashing, and delegating."""
 
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from company_operator.company_pack import CompanyPack
 from company_operator.config import Settings
 from company_operator.memory.store import OperatorDB
 from company_operator.queue import TaskQueue
+from company_operator.queue.cli import outcome_line
+from company_operator.queue.tasks import Task
 from company_operator.queue.worker import Worker
 from company_operator.runtime import BrainContext, NextAction, Operator, Plan, RunStore, UnderstandDecision
 from company_operator.tools import ToolRegistry, default_registry
@@ -244,3 +247,79 @@ async def test_parent_leaves_an_escalated_sub_task_to_a_person(
     ticket = next(t for t in sandbox.rows("support_tickets") if t["id"] == "TKT-1016")
     assert ticket["status"] != "resolved"  # it stays with the person the sub-task handed it to
     assert queue.get(task.id).status == "completed"
+
+
+class HangingBrain(ScriptedBrain):
+    """Thinks forever: stands in for a run that is still working when the worker is stopped."""
+
+    def __init__(self) -> None:
+        super().__init__(moves=[])
+        self.started = asyncio.Event()
+
+    async def understand(self, ctx: BrainContext) -> UnderstandDecision:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def test_a_stopped_worker_hands_its_task_back(
+    pack: CompanyPack, db: OperatorDB, settings: Settings, sandbox: LiveSandbox
+) -> None:
+    queue = TaskQueue(db)
+    task = queue.enqueue("Resolve support ticket TKT-1001.", ticket_id="TKT-1001")
+    brain = HangingBrain()
+    worker = make_worker(brain, pack, db, settings, queue)
+    job = asyncio.create_task(worker.run_once())
+    await asyncio.wait_for(brain.started.wait(), timeout=30)
+    assert worker.busy and queue.get(task.id).status == "running"
+
+    job.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await job
+    back = queue.get(task.id)
+    assert back.status == "queued" and back.worker is None  # another worker can take it now, not in 2 minutes
+    assert not worker.busy
+
+
+async def test_worker_reports_each_outcome(
+    pack: CompanyPack, db: OperatorDB, settings: Settings, sandbox: LiveSandbox
+) -> None:
+    queue = TaskQueue(db)
+    queue.enqueue("Resolve support ticket TKT-1001.", ticket_id="TKT-1001")
+    outcomes: list[Task] = []
+    worker = make_worker(
+        ScriptedBrain(moves=[open_("support", "tickets/TKT-1001", step="s1")]), pack, db, settings, queue
+    )
+    worker.on_finish = outcomes.append
+    await worker.run_once()
+    assert [t.status for t in outcomes] == ["completed"]
+
+
+def _task(status: str, error: str | None = None) -> Task:
+    return Task(
+        id="T-1",
+        text="Resolve support ticket TKT-1001.",
+        ticket_id="TKT-1001",
+        source="ticket",
+        requested_by="dashboard",
+        priority=0,
+        status=status,
+        parent_id=None,
+        run_id=None,
+        worker=None,
+        lease_until=None,
+        next_check_at=None,
+        attempts=1,
+        error=error,
+        created_at="",
+        updated_at="",
+    )
+
+
+def test_outcome_lines_show_why_a_task_failed() -> None:
+    assert (
+        outcome_line(_task("failed", "Error: spawn . ENOENT"))
+        == "[T-1 TKT-1001] Failed: Error: spawn . ENOENT"
+    )
+    assert outcome_line(_task("completed")) == "[T-1 TKT-1001] Completed"
+    assert "waiting for a person" in outcome_line(_task("waiting"))

@@ -36,6 +36,7 @@ class Worker:
         check_interval: timedelta = timedelta(seconds=15),
         poll_interval: float = 2.0,
         on_event: Callable[[Task, Event], None] | None = None,
+        on_finish: Callable[[Task], None] | None = None,
     ) -> None:
         self.operator = operator
         self.queue = queue
@@ -44,6 +45,8 @@ class Worker:
         self.check_interval = check_interval
         self.poll_interval = poll_interval
         self.on_event = on_event
+        self.on_finish = on_finish
+        self.busy = False
 
     async def run_forever(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -57,13 +60,21 @@ class Worker:
         if task is None:
             return None
         heartbeat = asyncio.create_task(self._heartbeat(task.id))
+        self.busy = True
         try:
             await self._work(task)
         except Exception as exc:  # the task fails, the worker lives on
             self.queue.finish(task.id, "failed", error=f"{type(exc).__name__}: {exc}")
+        except asyncio.CancelledError:  # stopped mid-task: the run is checkpointed, so hand the task back
+            self.queue.release(task.id, self.name)
+            raise
         finally:
+            self.busy = False
             heartbeat.cancel()
-        return self.queue.get(task.id)
+        outcome = self.queue.get(task.id)
+        if self.on_finish is not None:
+            self.on_finish(outcome)
+        return outcome
 
     async def _work(self, task: Task) -> None:
         store = self.operator.store

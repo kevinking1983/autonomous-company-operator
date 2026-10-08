@@ -125,6 +125,16 @@ class TaskQueue:
             worker,
         )
 
+    def release(self, task_id: str, worker: str) -> None:
+        """A worker that is stopped mid-task hands the task back at once, rather than leaving it to its lease."""
+        self.db._exec(
+            """UPDATE tasks SET status = 'queued', worker = NULL, lease_until = NULL, updated_at = ?
+                 WHERE id = ? AND worker = ? AND status = 'running'""",
+            now(),
+            task_id,
+            worker,
+        )
+
     def attach_run(self, task_id: str, run_id: str) -> None:
         self.db._exec("UPDATE tasks SET run_id = ?, updated_at = ? WHERE id = ?", run_id, now(), task_id)
 

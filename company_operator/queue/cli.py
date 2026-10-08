@@ -30,9 +30,25 @@ from company_operator.tools import default_registry
 from company_operator.verify import IndependentVerifier
 
 
+def _tag(task: Task) -> str:
+    return f"[{task.id}{' ' + task.ticket_id if task.ticket_id else ''}]"
+
+
 def show(task: Task, event: Event) -> None:
     if text := progress_line(event):
-        print(f"[{task.id}{' ' + task.ticket_id if task.ticket_id else ''}] {text.strip()}", flush=True)
+        print(f"{_tag(task)} {text.strip()}", flush=True)
+
+
+def outcome_line(task: Task) -> str:
+    """How a task ended, so a failure is visible here and not only in the API."""
+    if task.status == "waiting":
+        return f"{_tag(task)} Paused: waiting for a person (see the approval inbox)"
+    reason = f": {task.error}" if task.error else ""
+    return f"{_tag(task)} {task.status.capitalize()}{reason}"
+
+
+def show_outcome(task: Task) -> None:
+    print(outcome_line(task), file=sys.stderr if task.status == "failed" else sys.stdout, flush=True)
 
 
 async def serve(settings: Settings, workers: int, check_interval: float) -> None:
@@ -45,9 +61,6 @@ async def serve(settings: Settings, workers: int, check_interval: float) -> None
     queue = TaskQueue(db)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, stop.set)
     pool = [
         Worker(
             operator,
@@ -56,14 +69,35 @@ async def serve(settings: Settings, workers: int, check_interval: float) -> None
             name=f"worker-{i + 1}",
             check_interval=timedelta(seconds=check_interval),
             on_event=show,
+            on_finish=show_outcome,
         )
         for i in range(workers)
     ]
+    running = [asyncio.create_task(w.run_forever(stop)) for w in pool]
+
+    def on_stop_signal() -> None:
+        # First Ctrl+C: finish the task in hand, take no more. Second: stop now (the task goes back to the queue).
+        if stop.is_set():
+            for job in running:
+                job.cancel()
+            return
+        stop.set()
+        if any(w.busy for w in pool):
+            print("Stopping after the current task. Press Ctrl+C again to stop now.", flush=True)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, on_stop_signal)
+        except NotImplementedError:  # Windows: no loop signal handlers, so hand the signal to the loop
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(on_stop_signal))
     print(
         f"{workers} worker(s) waiting for tasks (Ctrl+C to stop). Queue: {queue.counts() or 'empty'}",
         flush=True,
     )
-    await asyncio.gather(*(w.run_forever(stop) for w in pool))
+    for result in await asyncio.gather(*running, return_exceptions=True):
+        if isinstance(result, Exception):  # a cancelled worker is a stop; anything else is a real error
+            raise result
+    print("Workers stopped.", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

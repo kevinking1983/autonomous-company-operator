@@ -7,19 +7,20 @@ const REFRESH_MS = 1500
 
 /**
  * What the operator's browser shows: a frame saved after every browser action, re-fetched while the run is
- * working. Once the run ends, the last frame stays as "the last page it saw".
+ * working. Once the run ends, the last frame stays as "the last page it saw". Until the operator has opened a page
+ * (`url` is null) there is no frame, so nothing is requested.
  */
 export function LiveBrowser({ runId, scope, working, url }: { runId: string; scope?: string | null; working: boolean; url: string | null }) {
   const [tick, setTick] = useState(0)
   const [failedTick, setFailedTick] = useState<number | null>(null)
 
   useEffect(() => {
-    if (!working) return
+    if (!working || !url) return
     const timer = window.setInterval(() => setTick((t) => t + 1), REFRESH_MS)
     return () => window.clearInterval(timer)
-  }, [working])
+  }, [working, url])
 
-  const missing = failedTick === tick
+  const missing = !url || failedTick === tick
   return (
     <Card>
       <CardHeader

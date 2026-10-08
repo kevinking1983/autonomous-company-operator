@@ -59,6 +59,37 @@ cp .env.example .env
 make install      # Python deps, Chromium for Playwright, dashboard deps
 ```
 
+Then set `ACO_LLM_API_KEY` in `.env`. Settings are read when a program starts,
+so restart the worker and the API after changing `.env`.
+
+### Windows (no `make`)
+
+In PowerShell, from the project folder:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # uv, once
+$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"   # if `uv` is not found in this window
+
+copy .env.example .env      # then set ACO_LLM_API_KEY in .env
+uv sync
+uv run playwright install chromium
+cd dashboard; npm install; npm run build; cd ..
+```
+
+Run each of these in its own PowerShell window:
+
+```powershell
+uv run quickbite-sandbox    # window 1: QuickBite on http://127.0.0.1:8100
+uv run operator-worker      # window 2: works through the queue
+uv run company-operator     # window 3: dashboard on http://127.0.0.1:8000
+```
+
+Start all three **from the same project folder**: each copy of the project keeps its
+own `data\` (queue, runs, memory) and its own `.env`, so a dashboard started from
+another copy queues work this worker never sees. The worker prints how each task
+ended; Ctrl+C once stops it after the current task, twice stops it now (the task
+goes back to the queue).
+
 ## Language model
 
 The operator's thinking phases (understand, plan, next action, summary) use a
@@ -126,7 +157,9 @@ How the queue behaves:
 - Tasks are durable and run in priority order, and a ticket is never queued
   twice while it is still active.
 - A worker holds a lease on its task. If the worker dies, another reclaims
-  the task and continues it **from its checkpoint**.
+  the task and continues it **from its checkpoint**. Ctrl+C once stops a
+  worker after its current task; twice stops it now and hands the task back
+  to the queue at once.
 - Paused runs go back to the queue as `waiting` and are re-checked
   automatically. Approvals, answers, customer replies and finished sub-tasks
   are picked up without anyone typing `--resume`.

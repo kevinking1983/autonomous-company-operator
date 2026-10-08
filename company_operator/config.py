@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # Language model. Provider: "gemini" or "openai_compatible" (Groq, OpenRouter, Ollama, ...).
     # Models are tried in order: when one is overloaded, the next takes over.
     llm_provider: str = "gemini"
-    llm_models: str = "gemini-3-flash-preview,gemini-3.5-flash-lite,gemini-3.1-flash-lite"
+    llm_models: str = "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite-latest"
     llm_api_key: str = ""
     llm_base_url: str = ""  # only for openai_compatible, e.g. https://api.groq.com/openai/v1
     llm_timeout: float = 90.0
