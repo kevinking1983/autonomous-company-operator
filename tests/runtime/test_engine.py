@@ -334,8 +334,32 @@ async def test_repeating_a_finished_step_is_redirected_and_bounded(
     brain = ScriptedBrain(plans=[plan("look", "act")], moves=[done("look")] * 30)
     state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
     assert state.phase == "escalated" and "Stuck: made the same decision 4 times" in state.outcome_reason
-    ignored = ctx.log.of_type("decision.ignored")
-    assert ignored and "already done. The current step is 'act'" in ignored[0].data["reason"]
+    reasons = [e.data["reason"] for e in ctx.log.of_type("decision.ignored")]
+    # First pushed back (nothing was done in "look"), then redirected to the current step.
+    assert "you have not taken a single action" in reasons[0]
+    assert any("already done. The current step is 'act'" in r for r in reasons)
+
+
+async def test_a_step_marked_done_with_nothing_done_is_pushed_back_once(
+    ctx: ToolContext, registry: ToolRegistry, pack: CompanyPack, store: RunStore, sandbox: LiveSandbox
+) -> None:
+    """Regression (clean sweep): after issuing a coupon the model marked "update the ticket and reply" done
+    without doing either; only the verifier caught it."""
+    brain = ScriptedBrain(
+        plans=[plan("look", "reply")],
+        moves=[
+            open_("support", "tickets/TKT-1001", step="look"),
+            done("look", "saw the ticket"),
+            done("reply", "replied"),  # nothing done in "reply": pushed back
+            done("reply", "the reply is already on the ticket page"),  # insisting is allowed, once warned
+        ],
+    )
+    state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
+    pushed = [
+        e for e in ctx.log.of_type("decision.ignored") if "not taken a single action" in e.data["reason"]
+    ]
+    assert len(pushed) == 1 and "'reply'" in pushed[0].data["reason"]
+    assert state.plan is not None and all(s.status == "done" for s in state.plan.steps)
 
 
 async def test_decision_budget_bounds_a_wandering_brain(

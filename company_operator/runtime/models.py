@@ -169,6 +169,8 @@ class RunState(Model):
     handover: str = ""  # set while handing the work over before escalating: the reason for stopping
     # Records a sub-task escalated to a person: this run must not change them (a person owns them now).
     hands_off: list[str] = []
+    # Steps the runtime already pushed back once for being marked done with nothing done in them.
+    pushed_back: list[str] = []
     resume_phase: Phase | None = None
     verification: Verification | None = None
     summary: str = ""

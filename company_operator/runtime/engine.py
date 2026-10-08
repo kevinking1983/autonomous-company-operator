@@ -302,6 +302,18 @@ class Operator:
                     )
                     tools.log.emit("decision.ignored", reason=state.hints[-1])
                     return None
+                acted = any(o.step_id == step.id and o.phase == "execute" for o in state.observations)
+                if not acted and step.id not in state.pushed_back:
+                    # Marking a step done with nothing done in it is how "update the ticket" gets claimed but
+                    # never happens. Push back once: do it, or point at where its result is already visible.
+                    state.pushed_back.append(step.id)
+                    state.hints.append(
+                        f"You marked step {step.id!r} ({step.goal}) done, but you have not taken a single "
+                        f"action in it. Its expected result: {step.expected}. Do the step now. Only if that "
+                        "result is already visible on a page you have seen, mark it done again and quote where."
+                    )
+                    tools.log.emit("decision.ignored", reason=state.hints[-1])
+                    return None
                 step.status, step.outcome = "done", action.reason
                 tools.log.emit("step.done", step=step.id, outcome=action.reason)
                 state.current_step = state.plan.open_steps[0].id if state.plan.open_steps else None
