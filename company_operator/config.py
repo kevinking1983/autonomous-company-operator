@@ -3,6 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +43,12 @@ class Settings(BaseSettings):
     llm_base_url: str = ""  # only for openai_compatible, e.g. https://api.groq.com/openai/v1
     llm_timeout: float = 90.0
     llm_min_interval: float = 2.0  # seconds between calls, to stay inside free-tier rate limits
+
+    @field_validator("browser_executable", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # `ACO_BROWSER_EXECUTABLE=` (as in .env.example) means "use Playwright's Chromium", not "launch ''".
+        return None if isinstance(value, str) and not value.strip() else value
 
     @property
     def model_list(self) -> list[str]:
