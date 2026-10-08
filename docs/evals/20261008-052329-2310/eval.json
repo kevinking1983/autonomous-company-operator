@@ -1,0 +1,21 @@
+{
+  "id": "20261008-052329-2310",
+  "label": "Fault reruns, third round (1 run)",
+  "pairs": [
+    [
+      "missing_item",
+      "flaky"
+    ]
+  ],
+  "models": [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest"
+  ],
+  "status": "completed",
+  "created_at": "2026-10-08T05:23:29+00:00",
+  "updated_at": "2026-10-08T05:26:17+00:00",
+  "started_at": "2026-10-08T05:23:29+00:00",
+  "current": null,
+  "finished_at": "2026-10-08T05:26:17+00:00"
+}

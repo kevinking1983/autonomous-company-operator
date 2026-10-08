@@ -59,6 +59,53 @@ async def test_cannot_leave_the_company_systems(op: Driver) -> None:
 # ── safe retries ──
 
 
+async def test_sign_in_page_failing_is_retried_not_fatal(sandbox: LiveSandbox, ctx: ToolContext) -> None:
+    # Regression (found by the fault suite): the verifier's browser signed in while the network was flaky,
+    # got the sign-in page as an HTTP 500, waited 30 s for a "Username" field and crashed the whole run.
+    browser = ctx.browser
+    sandbox.faults(fail_next=2)
+    await browser.page.goto(browser.url_for("payments", "login"))  # served as a 500
+    assert await browser._login("payments")  # retries until the real sign-in form appears
+    sandbox.faults(fail_next=50)
+    await browser.page.goto(browser.url_for("ops", "login"))
+    assert not await browser._login("ops")  # keeps failing: reported, never raised
+
+
+async def test_fill_says_which_button_saves_it(op: Driver, sandbox: LiveSandbox) -> None:
+    # Regression (found by the fault suite, redesigned layout): the model kept re-filling the internal note
+    # and never pressed the button that saves it, until the stuck detector stopped the run.
+    sandbox.faults(layout="shifted")
+    await op.open("support", "tickets/TKT-1001")
+    first = await op.fill('textarea "Internal note', "Refunded RF-1.")
+    assert 'Nothing is saved until this form is submitted with button "Add internal note"' in first.output
+    again = await op.fill('textarea "Internal note', "Refunded RF-1.")
+    assert "already held exactly this value" in again.output
+    picked = await op.select('combobox "Status"', "resolved")
+    assert 'submitted with button "Apply changes"' in picked.output
+    again = await op.select('combobox "Status"', "resolved")
+    assert "already selected" in again.output
+
+
+async def test_sign_in_retry_keeps_where_it_was_going(sandbox: LiveSandbox, ctx: ToolContext) -> None:
+    # Regression (found by the fault suite): retrying a failed sign-in page dropped ?next=, so the verifier
+    # landed on the ticket list and read it as if it were the ticket.
+    browser = ctx.browser
+    sandbox.faults(fail_next=1)
+    await browser.page.goto(browser.url_for("support", "login?next=/support/tickets/TKT-1001"))  # a 500
+    assert await browser._login("support")
+    assert browser.page.url.endswith("/support/tickets/TKT-1001")
+
+
+async def test_a_retried_read_that_needs_a_sign_in_gets_the_page(op: Driver, sandbox: LiveSandbox) -> None:
+    # Regression (fault suite): the verifier's first look at a ticket got a 500; the retry was sent to the
+    # sign-in page, and the sign-in page was returned as "recovered" in place of the ticket.
+    sandbox.faults(fail_next=1)
+    result = await op.open("support", "tickets/TKT-1003")  # never signed in to support yet
+    assert result.ok, result.output
+    assert result.output.splitlines()[0].endswith("/support/tickets/TKT-1003")
+    assert "# TKT-1003" in result.output
+
+
 async def test_failed_reads_are_retried_automatically(
     op: Driver, sandbox: LiveSandbox, ctx: ToolContext
 ) -> None:

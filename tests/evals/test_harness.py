@@ -2,9 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from company_operator.company_pack import CompanyPack
 from company_operator.config import Settings
 from company_operator.evals.harness import EvalHarness, EvalStore, scorecard
+from company_operator.evals.profiles import PROFILES, FaultProfile
 from company_operator.evals.world import Sandbox
 from company_operator.llm.base import LLMError
 from company_operator.memory.store import OperatorDB
@@ -53,8 +56,12 @@ def refund_script(pay: str, amount: int) -> ScriptedBrain:
 
 
 async def test_ground_truth_decides_not_the_operator(
-    sandbox: LiveSandbox, pack: CompanyPack, tmp_path: Path
+    sandbox: LiveSandbox, pack: CompanyPack, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A deterministic fault (the first read fails, then is retried) so the fixed script never meets a
+    # failure it cannot adapt to; random flaky faults depend on the exact order of requests.
+    one_failed_read = FaultProfile("flaky", "Flaky", "one failed read", {"fail_next": 1})
+    monkeypatch.setitem(PROFILES, "flaky", one_failed_read)
     pay = str(next(p["id"] for p in sandbox.rows("pay_payments") if p["order_id"] == "QB-48213"))
     brains = iter([refund_script(pay, 60), refund_script(pay, 70)])  # right, then ₹10 too much
 

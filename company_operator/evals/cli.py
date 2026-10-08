@@ -51,7 +51,9 @@ async def run(args: argparse.Namespace, settings: Settings) -> int:
         eval_id = args.resume
     else:
         pairs = resolve_pairs(args.suite, _split(args.cases), _split(args.profiles))
-        label = SUITES[args.suite]["label"] if args.suite else f"{len(pairs)} runs"
+        label = (
+            SUITES[args.suite]["label"] if args.suite else f"{len(pairs)} run{'' if len(pairs) == 1 else 's'}"
+        )
         eval_id = args.id or store.create(pairs, label=label, models=settings.model_list)
     meta = store.meta(eval_id)
     print(

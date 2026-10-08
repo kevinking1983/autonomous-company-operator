@@ -61,6 +61,9 @@ def test_dead_eval_process_is_noticed(evals: EvalStore) -> None:
     client = TestClient(api.app)
     assert client.get(f"/evals/{eval_id}").json()["meta"]["status"] == "stopped"
     assert client.post(f"/evals/{eval_id}/resume").json()["status"] == "queued"
+    # An eval created but never started (no process) can be started with resume.
+    fresh = evals.create([("missing_item", "clean")], label="y", models=[])
+    assert client.post(f"/evals/{fresh}/resume").json()["pid"] == os.getpid()
 
 
 def test_fault_switchboard(sandbox: LiveSandbox) -> None:

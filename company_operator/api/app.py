@@ -673,7 +673,7 @@ def start_eval(body: EvalBody, evals: Evals, launcher: Launcher) -> dict[str, An
         raise HTTPException(
             409, f"Eval {running[0]['id']} is still running; one at a time (they share the sandbox)."
         )
-    label = SUITES[body.suite]["label"] if body.suite else f"{len(pairs)} runs"
+    label = SUITES[body.suite]["label"] if body.suite else f"{len(pairs)} run{'' if len(pairs) == 1 else 's'}"
     eval_id = evals.create(pairs, label=label, models=get_settings().model_list)
     return evals.update(eval_id, pid=launcher(evals.dir(eval_id), eval_id))
 
@@ -681,7 +681,7 @@ def start_eval(body: EvalBody, evals: Evals, launcher: Launcher) -> dict[str, An
 @app.post("/evals/{eval_id}/resume")
 def resume_eval(eval_id: str, evals: Evals, launcher: Launcher) -> dict[str, Any]:
     meta = _eval_meta(evals, eval_id)
-    if meta["status"] in ("queued", "running", "stopping"):
+    if meta["status"] in ("queued", "running", "stopping") and _alive(meta.get("pid")):
         raise HTTPException(409, "It is still running")
     evals.update(eval_id, status="queued", reason=None)
     return evals.update(eval_id, pid=launcher(evals.dir(eval_id), eval_id))

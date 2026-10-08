@@ -41,6 +41,12 @@ class EventLog:
         self._lock = threading.Lock()
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                # A resumed run (possibly in another process) carries on its own log: checks over the whole
+                # run, like "no money moved twice", must see what happened before the pause too.
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        self._events.append(Event(**json.loads(line)))
 
     def emit(self, type: str, **data: Any) -> Event:
         with self._lock:

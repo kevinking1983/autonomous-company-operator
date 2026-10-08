@@ -230,9 +230,32 @@ class BrowserSession:
         locator = self.page.locator(f'[data-aco-ref="{ref}"]')
         if await locator.count() == 0:
             return await self._stale_ref(ref)
+        unchanged = await locator.input_value(timeout=5_000) == value
         await locator.fill(value, timeout=5_000)
         self._edits[ref] = await self._field_info(ref)
-        return await self.state()
+        state = await self.state()
+        again = (
+            "This field already held exactly this value, so filling it again changed nothing. "
+            if unchanged
+            else ""
+        )
+        return await self._submit_hint(state, ref, again)
+
+    async def _submit_hint(self, state: PageState, ref: str, prefix: str = "") -> PageState:
+        """Say which button saves an edited field: editing a form changes nothing until it is submitted."""
+        button: str = await self.page.locator(f'[data-aco-ref="{ref}"]').evaluate(
+            """el => {
+                const form = el.form || el.closest('form');
+                const b = form && form.querySelector('button[type=submit], button:not([type]), input[type=submit]');
+                if (!b || !b.getAttribute('data-aco-ref')) return '';
+                return `button "${(b.innerText || b.value || '').trim()}" [${b.getAttribute('data-aco-ref')}]`;
+            }"""
+        )
+        if button:
+            state.note = f"{prefix}Nothing is saved until this form is submitted with {button}.".strip()
+        elif prefix:
+            state.note = prefix.strip()
+        return state
 
     async def _field_info(self, ref: str) -> tuple[str, str]:
         """(field label, name of the form it belongs to) for an element on the current page."""
@@ -250,12 +273,19 @@ class BrowserSession:
         locator = self.page.locator(f'[data-aco-ref="{ref}"]')
         if await locator.count() == 0:
             return await self._stale_ref(ref)
+        before: str = await locator.evaluate("el => el.value + '|' + (el.selectedOptions[0]?.text ?? '')")
         try:
             await locator.select_option(label=option, timeout=3_000)
         except PlaywrightError:
             await locator.select_option(value=option, timeout=3_000)
         self._edits[ref] = await self._field_info(ref)
-        return await self.state()
+        after: str = await locator.evaluate("el => el.value + '|' + (el.selectedOptions[0]?.text ?? '')")
+        again = (
+            "This option was already selected, so selecting it again changed nothing. "
+            if before == after
+            else ""
+        )
+        return await self._submit_hint(await self.state(), ref, again)
 
     async def screenshot(self, path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,7 +345,9 @@ class BrowserSession:
 
     # ── the core: perform an action and classify what happened ──
 
-    async def _perform(self, action: Callable[[], Awaitable[object]], *, is_read: bool) -> PageState:
+    async def _perform(
+        self, action: Callable[[], Awaitable[object]], *, is_read: bool, signed_in_again: bool = False
+    ) -> PageState:
         self._last_doc = None
         self._verdicts = []
         try:
@@ -339,7 +371,14 @@ class BrowserSession:
         # Bounced to a login page: the session expired.
         system = self._system_of(self.page.url)
         if system and urlsplit(self.page.url).path.rstrip("/").endswith("/login"):
-            await self._login(system)
+            if not await self._login(system):
+                if submitted:
+                    self._release_grants(verdicts)
+                return await self.state(
+                    note=f"Could not sign in to {system}: the sign-in kept failing after "
+                    f"{len(self.retry_delays)} retries. Nothing was submitted.",
+                    error="transient",
+                )
             if submitted:
                 self._release_grants(verdicts)
                 return await self.state(
@@ -347,6 +386,11 @@ class BrowserSession:
                     "You are signed in again; repeat the action.",
                     error="rejected",
                 )
+            if is_read and not signed_in_again:
+                # Wherever the sign-in landed, show the page that was asked for.
+                state = await self._perform(action, is_read=True, signed_in_again=True)
+                state.note = f"Signed in to {system}. {state.note}".strip()
+                return state
             return await self.state(note=f"Signed in to {system}.")
 
         if doc is None:
@@ -385,7 +429,17 @@ class BrowserSession:
                 await self.page.goto(doc.url)
             except PlaywrightError:
                 continue
-            if self._last_doc and self._last_doc.status < 500:
+            system = self._system_of(self.page.url)
+            if system and urlsplit(self.page.url).path.rstrip("/").endswith("/login"):
+                # The retry was sent to sign in first: do that; the sign-in returns us to the page.
+                self._last_doc = None
+                if not await self._login(system):
+                    continue
+            if (
+                self._last_doc
+                and self._last_doc.status < 500
+                and not self.page.url.split("?")[0].endswith("/login")
+            ):
                 result = await self.state(
                     note=f"Recovered after {attempt} automatic retr{'y' if attempt == 1 else 'ies'}."
                 )
@@ -395,16 +449,34 @@ class BrowserSession:
             error="transient",
         )
 
-    async def _login(self, system: str) -> None:
+    async def _login(self, system: str) -> bool:
+        """Sign in, retrying with backoff if the sign-in page itself fails (it is a page like any other)."""
         credentials = self.pack.systems[system].credentials
         self.log.emit("browser.login", system=system, username=credentials.username)
         page = self.page
-        await page.get_by_label("Username").fill(credentials.username)
-        await page.get_by_label("Password").fill(credentials.password())
-        await page.get_by_role("button", name="Sign in").click()
-        await page.wait_for_load_state("load")
-        if urlsplit(page.url).path.rstrip("/").endswith("/login"):
-            raise PermissionError(f"Could not sign in to {system} as {credentials.username}")
+        # Retry the sign-in page we were sent to, keeping its ?next= (where to go once signed in).
+        on_login = urlsplit(page.url).path.rstrip("/").endswith("/login")
+        login_url = page.url if on_login else self.url_for(system, "login")
+        for attempt, delay in enumerate((0.0, *self.retry_delays)):
+            if attempt:
+                self.log.emit("browser.retry", url=login_url, attempt=attempt, delay=delay)
+                await asyncio.sleep(delay)
+                try:
+                    await page.goto(login_url)
+                except PlaywrightError:
+                    continue
+            if await page.get_by_label("Username").count() == 0:  # an error page, not the sign-in form
+                continue
+            try:
+                await page.get_by_label("Username").fill(credentials.username, timeout=5_000)
+                await page.get_by_label("Password").fill(credentials.password(), timeout=5_000)
+                await page.get_by_role("button", name="Sign in").click(timeout=5_000)
+                await page.wait_for_load_state("load")
+            except PlaywrightError:
+                continue
+            if not urlsplit(page.url).path.rstrip("/").endswith("/login"):
+                return True
+        return False
 
     async def _blocked(self) -> PageState:
         reasons = [v.reason for v in self._verdicts if not v.allowed]

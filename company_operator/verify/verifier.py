@@ -18,6 +18,7 @@ evidence. Before a run may complete, this verifier:
 
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -99,31 +100,76 @@ def find_records(pack: CompanyPack, state: RunState) -> list[tuple[str, str]]:
 
 
 def integrity_checks(log: EventLog) -> list[CriterionResult]:
-    """Checks over the audit log that need no model."""
-    grants = {e.data["grant"]: e.data for e in log.of_type("policy.grant")}
-    performed: list[tuple[str, str]] = []
-    for event in log.of_type("guard.allowed"):
-        grant = grants.get(event.data.get("grant") or "")
-        if grant and grant["action"] in MONEY_ACTIONS:
-            facts = {
-                k: v
-                for k, v in sorted(grant["facts"].items())
-                if k not in ("customer_claims_30d", "full_order_refund")
-            }
-            performed.append((grant["action"], repr(facts)))
-    duplicates = sorted({p for p in performed if performed.count(p) > 1})
-    if duplicates:
-        evidence = "; ".join(
-            f"{action} {facts} performed {performed.count((action, facts))} times"
-            for action, facts in duplicates
-        )
-        return [CriterionResult(criterion_id="integrity.money_once", passed=False, evidence=evidence)]
-    detail = ", ".join(f"{a} {f}" for a, f in performed) or "no money was moved"
+    """Checks over the audit log that need no model: no money movement happened twice.
+
+    A submission is "confirmed" when the system answered it, and "uncertain" when it answered 5xx (the
+    money may or may not have moved). Two confirmed submissions of the same movement fail. An uncertain one
+    followed by another is acceptable only if the operator re-read the systems in between (the runtime
+    requires it), so the retry was a decision made on fresh evidence, not a blind repeat.
+    """
+    # Grant ids restart when a paused run resumes in a new process, so match each submission to the grant
+    # most recently issued under that id, in log order.
+    grants: dict[str, dict[str, Any]] = {}
+    attempts: list[dict[str, Any]] = []  # in order: key, status, and whether a read came after it
+    for event in log.events:
+        d = event.data
+        if event.type == "policy.grant":
+            grants[d["grant"]] = d
+        elif event.type == "guard.allowed":
+            grant = grants.get(d.get("grant") or "")
+            if grant and grant["action"] in MONEY_ACTIONS:
+                facts = {
+                    k: v
+                    for k, v in sorted(grant["facts"].items())
+                    if k not in ("customer_claims_30d", "full_order_refund")
+                }
+                attempts.append(
+                    {
+                        "key": (grant["action"], repr(facts)),
+                        "path": d["path"],
+                        "status": "confirmed",
+                        "reread": False,
+                    }
+                )
+        elif (
+            event.type == "browser.uncertain"
+            and attempts
+            and str(d.get("url", "")).endswith(attempts[-1]["path"])
+        ):
+            attempts[-1]["status"] = "uncertain"
+        elif event.type == "policy.grant_released" and attempts:
+            attempts[-1]["status"] = "rejected"  # the system refused it: nothing moved
+        elif event.type == "tool.call" and d.get("tool") in ("browser_open", "browser_snapshot") and attempts:
+            attempts[-1]["reread"] = True
+
+    problems: list[str] = []
+    notes: list[str] = []
+    for key in dict.fromkeys(a["key"] for a in attempts):
+        mine = [a for a in attempts if a["key"] == key and a["status"] != "rejected"]
+        confirmed = [a for a in mine if a["status"] == "confirmed"]
+        action, facts = key
+        if len(confirmed) > 1:
+            problems.append(f"{action} {facts} performed {len(confirmed)} times")
+        blind = [a for a, _ in itertools.pairwise(mine) if a["status"] == "uncertain" and not a["reread"]]
+        if blind:
+            problems.append(f"{action} {facts} was retried after an uncertain attempt without checking first")
+        elif any(a["status"] == "uncertain" for a in mine):
+            notes.append(
+                f"{action} {facts}: an attempt's outcome was unknown (the system answered 5xx); "
+                "the operator re-read the records before acting again"
+            )
+    if problems:
+        return [
+            CriterionResult(criterion_id="integrity.money_once", passed=False, evidence="; ".join(problems))
+        ]
+    done = [f"{a} {f}" for a, f in dict.fromkeys(x["key"] for x in attempts if x["status"] == "confirmed")]
+    detail = ", ".join(done) or "no money was moved"
     return [
         CriterionResult(
             criterion_id="integrity.money_once",
             passed=True,
-            evidence=f"Each money movement happened once: {detail}",
+            evidence=f"Each money movement happened once: {detail}"
+            + (f". {'; '.join(notes)}" if notes else ""),
         )
     ]
 
@@ -168,19 +214,23 @@ class IndependentVerifier:
                     if url in seen_urls:
                         continue
                     seen_urls.add(url)
-                    state = await session.open(url)
-                    if state.error:
-                        text = f"(could not read this page: {state.note or state.error})"
-                    else:
-                        text = state.snapshot
                     shot = (
                         tools.evidence_dir / f"verify{round_no}-{len(pages) + 1:02d}-{kind}-{record_id}.png"
                     )
-                    await session.screenshot(shot)
-                    pages.append(EvidencePage(kind, record_id, state.url, text, str(shot)))
-                    tools.log.emit(
-                        "verify.page", record=f"{kind}:{record_id}", url=state.url, error=state.error
-                    )
+                    try:
+                        state = await session.open(url)
+                        text = (
+                            state.snapshot
+                            if not state.error
+                            else f"(could not read this page: {state.note or state.error})"
+                        )
+                        page_url, error = state.url, state.error
+                        await session.screenshot(shot)
+                    except Exception as exc:  # an unreadable page is "not verified", never a crashed run
+                        page_url, error = url, "transient"
+                        text = f"(could not read this page: {type(exc).__name__})"
+                    pages.append(EvidencePage(kind, record_id, page_url, text, str(shot)))
+                    tools.log.emit("verify.page", record=f"{kind}:{record_id}", url=page_url, error=error)
         return pages
 
     async def _judge(

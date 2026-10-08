@@ -90,6 +90,8 @@ function EvalView({ evalId, catalog }: { evalId: string; catalog: EvalCatalog })
   const byPair = new Map(results.map((r) => [`${r.case}|${r.profile}`, r]))
   const active = ACTIVE.has(meta.status)
   const result = picked ? byPair.get(picked.join('|')) : undefined
+  // Many fault profiles: the matrix takes the full width and the side cards go underneath it.
+  const wide = new Set(meta.pairs.map(([, p]) => p)).size > 4
 
   return (
     <div className="space-y-6">
@@ -132,7 +134,7 @@ function EvalView({ evalId, catalog }: { evalId: string; catalog: EvalCatalog })
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+      <div className={cx('grid grid-cols-1 gap-6', wide ? 'xl:grid-cols-2' : 'xl:grid-cols-3')}>
         <Card className="xl:col-span-2">
           <CardHeader
             title={`${meta.label} · ${meta.id}`}
@@ -141,7 +143,7 @@ function EvalView({ evalId, catalog }: { evalId: string; catalog: EvalCatalog })
           />
           <Matrix meta={meta} byPair={byPair} catalog={catalog} picked={picked} onPick={setPicked} />
         </Card>
-        <div className="space-y-6">
+        <div className={wide ? 'contents' : 'space-y-6'}>
           <Card>
             <CardHeader title="Pass rate by fault profile" subtitle="Share of runs passing every critical check" icon={Wrench} />
             <ProfileBars card={card.by_profile} catalog={catalog} />
@@ -267,7 +269,7 @@ function Matrix({
           {cases.map((c) => (
             <tr key={c} className="border-b border-line last:border-0">
               <td className="px-5 py-2">
-                <p className="font-medium">{humanise(c)}</p>
+                <p className="font-medium whitespace-nowrap">{humanise(c)}</p>
                 <p className="font-mono text-[11px] text-ink-3">{ticket(c)}</p>
               </td>
               {profiles.map((p) => {
@@ -284,7 +286,7 @@ function Matrix({
                       onClick={() => onPick([c, p])}
                       disabled={!r}
                       className={cx(
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap',
                         cell.className,
                         r && 'hover:ring-2 hover:ring-line-strong',
                         isPicked && 'ring-2 ring-accent',

@@ -358,5 +358,8 @@ async def test_repeating_a_successful_action_counts_as_stuck(
     state = await operator(brain, registry, pack, store).run(new_run(store), ctx)
     stuck = [e for e in ctx.log.of_type("run.handover", "run.escalated") if "Stuck" in e.data["reason"]]
     assert stuck and state.phase == "escalated"
-    # Stopped after 3 repeats, then again after 3 repeats during the handover (the script keeps repeating).
-    assert len([o for o in state.observations if o.call.tool == "browser_snapshot"]) == 6
+    # The first repeat is not redone but answered with a warning; a third repeat stops the run. Then the
+    # same again during the handover (the script keeps repeating): two snapshots in each streak.
+    assert len([o for o in state.observations if o.call.tool == "browser_snapshot"]) == 4
+    warnings = [e for e in ctx.log.of_type("decision.ignored") if "exactly this decision" in e.data["reason"]]
+    assert len(warnings) == 2

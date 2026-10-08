@@ -1,5 +1,7 @@
 """The independent verifier: evidence gathering, judging, integrity checks."""
 
+from pathlib import Path
+
 import pytest
 
 from company_operator.audit.log import EventLog
@@ -109,6 +111,64 @@ def test_integrity_passes_for_distinct_money_movements() -> None:
 
 def test_integrity_catches_the_same_refund_twice() -> None:
     [check] = integrity_checks(_log_with_refunds("PAY-1", "PAY-1"))
+    assert not check.passed and "performed 2 times" in check.evidence
+
+
+def _uncertain_then_retry(*, reread: bool) -> EventLog:
+    log = EventLog()
+    path = "/payments/transactions/PAY-1/refund/confirm"
+    for i in (1, 2):
+        log.emit(
+            "policy.grant",
+            grant=f"G{i}",
+            action="payments.refund",
+            facts={"payment_id": "PAY-1", "amount": 60},
+        )
+        log.emit("guard.allowed", grant=f"G{i}", method="POST", path=path)
+        if i == 1:
+            log.emit("browser.uncertain", method="POST", url=f"http://x{path}", status=500)
+            if reread:
+                log.emit("tool.call", tool="browser_open", arguments={"path": "transactions/PAY-1"})
+    return log
+
+
+def test_retry_after_an_uncertain_attempt_needs_a_look_first() -> None:
+    # Regression (fault suite): a 500 before anything happened, the operator re-checked, saw no refund and
+    # tried again. One refund, but the check counted two submissions and the correct run escalated.
+    [checked] = integrity_checks(_uncertain_then_retry(reread=True))
+    assert checked.passed and "re-read the records" in checked.evidence
+    # Retrying blindly is exactly how money moves twice (the first attempt may have committed).
+    [blind] = integrity_checks(_uncertain_then_retry(reread=False))
+    assert not blind.passed and "without checking first" in blind.evidence
+
+
+def test_refused_submissions_are_not_money_moved() -> None:
+    log = _log_with_refunds("PAY-1", "PAY-1")
+    events = log.events
+    log = EventLog()
+    for e in events[:2]:
+        log.emit(e.type, **e.data)
+    log.emit("policy.grant_released", grant="G0")
+    for e in events[2:]:
+        log.emit(e.type, **e.data)
+    [check] = integrity_checks(log)
+    assert check.passed
+
+
+def test_money_twice_across_a_pause_and_resume_is_caught(tmp_path: Path) -> None:
+    # Regression: a run that resumed in another process started an empty log, so a refund made before the
+    # pause and repeated after it looked like one. Grant ids also restart ("G1" in both processes).
+    path = tmp_path / "events.jsonl"
+    for _ in range(2):  # before the pause, then after resuming in a "new process"
+        log = EventLog(path)
+        log.emit(
+            "policy.grant", grant="G1", action="payments.refund", facts={"payment_id": "PAY-1", "amount": 60}
+        )
+        log.emit(
+            "guard.allowed", grant="G1", method="POST", path="/payments/transactions/PAY-1/refund/confirm"
+        )
+    assert [e.seq for e in log.events] == [1, 2, 3, 4]  # numbering carries on
+    [check] = integrity_checks(log)
     assert not check.passed and "performed 2 times" in check.evidence
 
 

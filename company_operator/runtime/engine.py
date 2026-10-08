@@ -277,6 +277,15 @@ class Operator:
                 tools,
                 f"Stuck: made the same decision {state.counters.repeats} times in a row ({action.kind}).",
             )
+        if action.kind == "tool" and state.counters.repeats == 2 and state.budgets.max_repeats > 2:
+            # Warn once before giving up: doing it again would change nothing, so don't; say what to do instead.
+            state.hints.append(
+                "You just made exactly this decision and it already happened; repeating it changes nothing. "
+                "Do the next thing instead: if you filled or selected fields, submit their form with its button "
+                "(the last result names it); if this step's result is already visible, mark the step done."
+            )
+            tools.log.emit("decision.ignored", reason=state.hints[-1])
+            return None
         step = (
             state.plan.step(action.step_id) if action.step_id else state.plan.step(state.current_step or "")
         )

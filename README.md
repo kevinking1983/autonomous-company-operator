@@ -292,32 +292,46 @@ failures; resume it later.
 
 ### What the evals found
 
-Evals earn their keep by finding what a few hand-run demos do not. In the first
-runs (Gemini Flash-Lite models):
+Evals earn their keep by finding what a few hand-run demos do not. Every
+finding below came from an eval run (Gemini Flash-Lite models), was fixed in
+the runtime (never in a case), and has a regression test.
 
-- **Refs written with brackets.** The model wrote element refs as `"[e5]"`,
-  the way they appear in page snapshots. Every fill then failed as "the page
-  changed", and a simple missing-item refund escalated. Fixed: refs are
-  normalised at the tool boundary. Missing item went from fail to pass.
-- **The wrong button, read as a policy wall.** Asked to raise an incident, the
-  operator clicked the restaurant's "Flag for quality review" button while
-  declaring `ops.raise_incident`. The guard blocked it, correctly. But the message
-  only said the flag action was not authorised, so the operator kept clicking the
-  same button. Its own verifier then caught the missing incident and it handed the
-  ticket over, without claiming success. Fixed: when a control submits something
-  other than what was declared, the operator is told so, and where the declared
-  action is actually done.
+| Found by | What went wrong | Fix |
+|---|---|---|
+| Smoke | The model wrote element refs as `"[e5]"`, the way they appear in snapshots; every fill failed as "the page changed", and a simple refund escalated | Refs are normalised at the tool boundary |
+| Every scenario | Asked to raise an incident, the operator declared it on the restaurant's "Flag for quality review" button. The guard blocked it, correctly, but the message read like a policy wall, so it kept clicking | When a control submits something other than what was declared, the operator is told so and where the declared action is actually done |
+| Faults: flaky network | The verifier's browser signed in just as the sign-in page failed with a 500; it waited 30 s for a "Username" field and crashed the run | Sign-in retries with backoff and never throws; a page the verifier cannot read counts as "not verified", not a crash |
+| Faults: UI redesign, refund timeout | The model filled a form, then filled it again, never pressing the button that saves it (and once picked a ticket category after saving the form) | After a fill or select the operator is told which button saves it, and re-filling a field with the value it already holds is called out. The first exact repeat of a tool call is answered with a warning instead of being redone; repeating on still escalates |
+| Faults: flaky network, storm | Retrying a failed sign-in page dropped its `?next=`, and a retried read bounced to the sign-in page returned the sign-in page as "recovered"; the verifier then judged the wrong page | Sign-in retries keep the return address; after signing in, a read always reopens the page it asked for |
+| Faults: flaky network | A refund attempt failed with a 500 before anything happened; the operator re-checked, saw no refund and tried again (one refund, correct), but the "never pay twice" check counted two submissions and failed the run | The check counts confirmed submissions. An uncertain attempt (5xx) followed by another passes only if the operator re-read the records in between; a blind retry still fails |
 
-Results so far (each eval's scorecard and per-run results are in [`docs/evals/`](docs/evals/)):
+Through all of these the safety layers held. No run ever moved money where it
+should not, or twice. When the operator could not get it right, its own verifier
+refused to pass the run, and the operator handed the ticket over instead of
+claiming success.
+
+### Results
+
+Each eval's scorecard and per-run results are in [`docs/evals/`](docs/evals/).
+Model: Gemini Flash-Lite (3.5, with 3.1 and latest as fallbacks).
 
 | Eval | Scored | Passed | Unsafe runs |
 |---|---|---|---|
 | Smoke, before the ref fix | 2 of 3 (stopped early) | 1 | 0 |
 | Smoke, after the ref fix | 3 of 3 | 3 | 0 |
-| Every scenario (in progress; wrong order ran before the wrong-button fix) | 9 of 14 | 8 | 0 |
+| Every scenario: 14 tickets, no faults | 14 of 14 | 13 | 0 |
+| Wrong order again, after its fix | 1 of 1 | 1 | 0 |
+| Faults: 12 runs under 7 fault profiles (first pass) | 10 of 12 | 8 | 0 |
+| Faults: the 4 runs that did not pass, after fixes | 4 of 4 | 1 | 0 |
+| Faults: the 3 still failing, after more fixes | 3 of 3 | 2 | 0 |
+| Faults: the last one, after the last fixes | 1 of 1 | 1 | 0 |
 
-Still to run: the rest of the 14-scenario eval, wrong order again with the
-fix, and the 12-run fault suite.
+On the final code, **all 14 scenarios and all 12 fault runs have passed**, with
+**no unsafe runs at any point**. The table keeps the history on purpose: it
+shows what each fix was for. One honest caveat: the passes on the final code
+come from different eval runs over time, not one clean sweep, and model output
+varies from run to run, so a single pass is evidence, not a guarantee.
+Re-running the full suites on the final code is the next measurement to make.
 
 ## Develop
 
