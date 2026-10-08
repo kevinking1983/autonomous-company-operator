@@ -260,10 +260,13 @@ class BulkBody(BaseModel):
 
 
 @app.post("/tasks/bulk")
-def create_tasks(body: BulkBody, db: Db) -> list[dict[str, Any]]:
+def create_tasks(body: BulkBody, db: Db, pack: Pack) -> list[dict[str, Any]]:
     """Queue several tickets at once. A ticket already queued or running is not queued twice."""
     ids = list(dict.fromkeys(t.strip().upper() for t in body.ticket_ids if t.strip()))
-    bad = [t for t in ids if not re.fullmatch(r"TKT-\d+", t)]
+    # What a ticket id looks like is the company's business (its Company Pack), not the operator's.
+    ticket = pack.records.get("ticket")
+    pattern = ticket.id_pattern if ticket else r"\S+"
+    bad = [t for t in ids if not re.fullmatch(pattern, t, re.IGNORECASE)]
     if bad or not ids:
         raise HTTPException(422, f"Not ticket ids: {', '.join(bad) or 'none given'}")
     queue = queue_of(db)

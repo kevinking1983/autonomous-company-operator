@@ -10,10 +10,24 @@ back-office web apps in a real browser, asks a human when policy requires it,
 checks independently that the outcome really happened, and returns evidence.
 
 > Built against the CentrAlign AI Founding Engineer problem statement.
-> See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full design.
+> **Start here:** [how it works](docs/ARCHITECTURE.md) ·
+> [why it is built this way](docs/DECISIONS.md) · [a 10-minute demo](docs/DEMO.md) ·
+> [eval results](#reliability-and-evals) · [limitations](#known-limitations).
 
-**Status:** step 11 of 13 (reliability and evals). See the
-[build plan](docs/BLUEPRINT.md#6-build-plan).
+![Run view](docs/screenshots/dashboard-run.png)
+
+## What the problem statement asks, and where to see it
+
+| Asked for | In this project |
+|---|---|
+| **Autonomy**: from a request to completed work, with the steps unstated | A ticket says *"my Coke wasn't in the bag"*; the operator finds the order, the packing log and the payment, picks the procedure, refunds, replies and closes the ticket. Supervisor requests are split into sub-tasks and worked in the background. |
+| **Execution** in real systems | Three separate web apps with their own logins, operated through a real browser; state changes in systems the operator does not control. |
+| **Reliability**: unexpected states, errors, retries, failures | Typed failures with an Adapt rule for each; reads retry; uncertain writes force a fresh look before anything else; budgets, a loop check and a hand-over. **Measured**: 14 scenarios and 7 fault profiles, scored on ground truth ([results](#results)). |
+| **Verification** with evidence | A task contract written before acting; an independent verifier that can change nothing re-reads the records; evidence and screenshots per criterion; a "never pay twice" check in code. |
+| **Asking for help** | Policy-driven approvals (with the evidence the operator saw), questions, waiting for customers; durable across hours and restarts; supervisors can approve a lower amount. |
+| **Using company context** | The Company Pack: SOPs, policy, permissions and systems as data. Rejections become learned rules. |
+| **Generalization** | No code for any ticket type: 9 ticket-type SOPs (plus general ones) and supervisor requests run on one runtime ([details](docs/DECISIONS.md#2-the-company-is-data-the-company-pack)). |
+| **Engineering quality** | No agent framework; typed Python (strict mypy), 250+ tests, many against the real sandbox in a real browser, CI, an append-only audit log behind every screen. |
 
 ---
 
@@ -31,9 +45,9 @@ Goal → Understand → Plan → Execute → Observe → Adapt → Verify → Co
 | `sandbox/quickbite/` | QuickBite's sandboxed systems: Support Desk, Ops Admin, Payments Console |
 | `company_packs/quickbite/` | QuickBite's SOPs, policies, systems and permissions, stored as data ([details](company_packs/quickbite/README.md)) |
 | `dashboard/` | React + TypeScript dashboard |
-| `evals/` | Scenario harness and reliability scorecard |
+| `company_operator/evals/` | Eval harness: cases, fault profiles, scoring ([results](docs/evals/)) |
 | `tests/` | Test suite |
-| `docs/` | Blueprint, architecture and design decisions |
+| `docs/` | [Architecture](docs/ARCHITECTURE.md), [decisions](docs/DECISIONS.md), [demo script](docs/DEMO.md), [blueprint](docs/BLUEPRINT.md), eval results |
 
 ## Setup
 
@@ -325,13 +339,16 @@ Model: Gemini Flash-Lite (3.5, with 3.1 and latest as fallbacks).
 | Faults: the 4 runs that did not pass, after fixes | 4 of 4 | 1 | 0 |
 | Faults: the 3 still failing, after more fixes | 3 of 3 | 2 | 0 |
 | Faults: the last one, after the last fixes | 1 of 1 | 1 | 0 |
+| **Clean sweep on the final code** (both suites in one eval; paused by the model quota) | 11 of 26 | 11 | 0 |
 
 On the final code, **all 14 scenarios and all 12 fault runs have passed**, with
 **no unsafe runs at any point**. The table keeps the history on purpose: it
-shows what each fix was for. One honest caveat: the passes on the final code
-come from different eval runs over time, not one clean sweep, and model output
-varies from run to run, so a single pass is evidence, not a guarantee.
-Re-running the full suites on the final code is the next measurement to make.
+shows what each fix was for. One honest caveat: those passes come from
+different eval runs over time, and model output varies from run to run, so a
+single pass is evidence, not a guarantee. A clean sweep of both suites on the
+final code has started: its first 11 runs (11 of the 14 scenarios) all passed,
+with no unsafe runs. The free model quota paused it; its remaining 15 runs
+(3 scenarios and the 12 fault runs) are the next thing to add here.
 
 ## Develop
 
@@ -341,11 +358,75 @@ make format           # auto-format Python
 make dashboard-build  # type-check and build the dashboard
 ```
 
-## Documentation (filled in as the build progresses)
+## Models, APIs and frameworks
 
-- Architecture: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md#3-architecture)
-- Design decisions: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md#32-key-design-decisions-the-why-for-the-interview)
-- Known limitations: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md#7-known-limitations-stated-honestly)
-- Models, APIs and frameworks used: *to be completed*
-- Assumptions: *to be completed*
-- Demo: *to be completed*
+| What | Used for |
+|---|---|
+| **Gemini** (`gemini-3.5-flash-lite`, then `gemini-3.1-flash-lite`, then `gemini-flash-lite-latest` as fallbacks), through the Gemini REST API (`generateContent`) with function calling and image input | Every decision the operator makes, and the verifier's judgement. Any OpenAI-compatible API (Groq, OpenRouter, Ollama...) works by configuration. |
+| **Playwright** (Chromium) | Operating the company's web apps; page snapshots, screenshots |
+| **FastAPI**, Uvicorn, Server-Sent Events | The operator API, the live run stream, the sandbox apps |
+| **Pydantic** v2, pydantic-settings | Typed models for the Company Pack, runs, tools and configuration |
+| **SQLite** | Human requests, memory, the task queue (and the sandbox's own data) |
+| httpx, PyYAML, Jinja2, Pillow | HTTP clients, the Company Pack's YAML, sandbox pages, generated photo attachments |
+| **React** 19, TypeScript, Vite, Tailwind CSS, React Router, lucide-react, react-markdown | The dashboard |
+| uv, ruff, mypy (strict), pytest, oxlint, GitHub Actions | Tooling and CI |
+
+No agent framework: the runtime, prompts, tool layer and model clients are this
+repository's own code.
+
+## Assumptions
+
+- **QuickBite is fictional.** Its people, data and money are seeded; no real
+  company, brand, customer or credential is used.
+- **The operator works like a new hire:** through the same web apps and logins
+  a person would get, not through privileged database access. The sandbox's
+  control API (reset, faults, ground truth) is for the eval harness and the
+  dashboard's switchboard, never for the operator.
+- **Amounts are in rupees**, stored in paise. Policy thresholds (₹500, coupon
+  tiers) are QuickBite's, set in the Company Pack.
+- **One supervisor role** approves and answers. Customers in the sandbox reply
+  from a script.
+- **One company per deployment**, running on one machine.
+
+## Known limitations
+
+- **A small model makes mistakes.** Flash-Lite repeats itself and misreads forms
+  more than larger models do; the runtime's safeguards (hints, the loop check,
+  verification, hand-over) catch these, but some correct work still ends in a
+  hand-over. Results also vary from run to run, so eval results are evidence,
+  not a guarantee.
+- **Evals are small.** 14 scenarios and 7 fault profiles, sequential runs of
+  about 25 model calls each; the free model quota limits how many fit in a day.
+  Expected outcomes are written by hand.
+- **Web apps only.** Desktop applications are out of scope (the tool layer is
+  where an OS-level connector would go). Pages need reasonably semantic HTML for
+  the snapshots to be useful.
+- **Within its permissions, a model can be misled.** A customer's message is
+  untrusted text in the prompt. Permissions, approvals and the request guard
+  bound what a misled model can do, but they do not stop, say, a refund that
+  policy allows being made for a claim that is false.
+- **"Never pay twice" relies on the audit log** in normal use; only the evals
+  compare against ground truth.
+- **Before/after for a change** needs an earlier view of the same record.
+- **The operator API and dashboard have no authentication**, and run on one
+  machine with SQLite. Secrets are in `.env`; the sandbox's logins are in the
+  Company Pack (sandbox only).
+- **A few prompt examples use QuickBite's id formats**, so a new company's pack
+  should come with its own examples.
+
+## Next steps
+
+- **Authentication and roles** for the API and dashboard; per-company secrets in
+  a vault; scoped credentials per run.
+- **Postgres and a workflow engine** (Temporal or similar) instead of SQLite and
+  the in-house queue, for many workers and machines.
+- **An isolated browser container per run.**
+- **Larger evals, grown from real runs:** every hand-over and rejection becomes
+  a new case; run them nightly against several models.
+- **A stronger model for hard steps** (planning, verification), keeping a small
+  one for routine clicks, chosen per call.
+- **Real connectors** (Zendesk or Freshdesk, a payment gateway's API) next to the
+  browser, with the same policy engine in front of both.
+- **Desktop apps** through a vision-based computer-use connector.
+- **A second Company Pack** (another company, another kind of work) to test
+  generalization beyond support.

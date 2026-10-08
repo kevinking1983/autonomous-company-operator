@@ -3,7 +3,11 @@
 > Built against the **CentrAlign AI Founding Engineer** problem statement:
 > *"An AI operator that turns a company request into completed work."*
 >
-> Status: **DRAFT v2, for discussion.**
+> Status: **agreed, and built (steps 0 to 12).** This is the plan as it was
+> agreed before building, kept as the record of intent. How the system is
+> actually built is in [ARCHITECTURE.md](ARCHITECTURE.md); what changed along
+> the way, and why, is in [DECISIONS.md](DECISIONS.md); the current limitations
+> and next steps are in the [README](../README.md#known-limitations).
 
 ---
 
@@ -255,6 +259,9 @@ fact**, so future runs learn from it.
 ---
 
 ## 5. Repository layout
+
+*As planned. As built, the evals live in `company_operator/evals/` and the
+dashboard uses no shadcn/ui; see the README's repository layout.*
 
 ```
 autonomous-company-operator/
